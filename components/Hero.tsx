@@ -73,17 +73,17 @@ export default function Hero() {
             <span className="hero-cursor-el" aria-hidden="true" />
           </p>
           <div className="hero-btns">
-            <Link href="#articles" className="btn-p">
+            <Link href="/blog" className="btn-p">
               Explorer les articles
               <svg width="13" height="13" viewBox="0 0 13 13" fill="none" aria-hidden="true"><path d="M2 6.5h9M8 3l3.5 3.5L8 10" stroke="currentColor" strokeWidth="1.5" strokeLinecap="round" strokeLinejoin="round"/></svg>
             </Link>
-            <Link href="#about" className="btn-g">À propos</Link>
+            <Link href="/a-propos" className="btn-g">À propos</Link>
           </div>
         </div>
       </div>
 
       <div className="hero-scroll" aria-hidden="true">
-        <span>Scroll</span>
+        <span>Explorer</span>
         <div className="scroll-track" />
       </div>
     </section>

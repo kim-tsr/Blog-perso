@@ -4,9 +4,9 @@ import Link from 'next/link'
 import { ArticleMeta, getThemeClasses } from '@/lib/theme'
 import ScrollReveal from './ScrollReveal'
 
-interface Props { articles: ArticleMeta[] }
+interface Props { articles: ArticleMeta[]; hideMeta?: boolean }
 
-export default function ArticlesGrid({ articles }: Props) {
+export default function ArticlesGrid({ articles, hideMeta }: Props) {
   const cards = useRef<(HTMLAnchorElement|null)[]>([])
 
   const onMove = (e: React.MouseEvent<HTMLAnchorElement>, i: number) => {
@@ -38,16 +38,18 @@ export default function ArticlesGrid({ articles }: Props) {
         .ac-meta { display:flex; justify-content:space-between; font-size:11px; color:var(--dim); margin-top:18px; padding-top:18px; border-top:1px solid var(--border); font-family:var(--fm); }
         @media(max-width:768px) { .articles-grid { grid-template-columns:1fr; } .articles-head { flex-direction:column; align-items:flex-start; gap:20px; } }
       `}</style>
-      <div className="articles-head reveal">
-        <div>
-          <div className="stag">Base de connaissances</div>
-          <h2 className="stitle">Derniers articles</h2>
+      {!hideMeta && (
+        <div className="articles-head reveal">
+          <div>
+            <div className="stag">Base de connaissances</div>
+            <h2 className="stitle">Derniers articles</h2>
+          </div>
+          <Link href="/blog" className="btn-g" aria-label="Voir tous les articles">
+            Tous les articles
+            <svg width="12" height="12" viewBox="0 0 12 12" fill="none" aria-hidden="true"><path d="M2 6h8M7 3l3 3-3 3" stroke="currentColor" strokeWidth="1.5" strokeLinecap="round" strokeLinejoin="round"/></svg>
+          </Link>
         </div>
-        <Link href="/articles" className="btn-g" aria-label="Voir tous les articles">
-          Tous les articles
-          <svg width="12" height="12" viewBox="0 0 12 12" fill="none" aria-hidden="true"><path d="M2 6h8M7 3l3 3-3 3" stroke="currentColor" strokeWidth="1.5" strokeLinecap="round" strokeLinejoin="round"/></svg>
-        </Link>
-      </div>
+      )}
       <div className="articles-grid">
         {articles.map((a, i) => {
           const { tc, thumb, tl } = getThemeClasses(a.theme)

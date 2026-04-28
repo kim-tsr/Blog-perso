@@ -46,8 +46,13 @@ export default function Contact() {
           </ScrollReveal>
           <ScrollReveal delay={0.4}>
             <div className="socials">
-              {[{label:'GitHub',text:'GH'},{label:'LinkedIn',text:'LI'},{label:'Twitter / X',text:'TW'},{label:'Flux RSS',text:'RSS'}].map(s => (
-                <a key={s.text} href="#" className="soc" aria-label={s.label}>{s.text}</a>
+              {[
+                {label:'GitHub',text:'GH',href:'https://github.com/kim-tsr'},
+                {label:'LinkedIn',text:'LI',href:'https://www.linkedin.com/in/kim-tessier-330262230/'},
+              ].map(s => (
+                <a key={s.text} href={s.href} className="soc" aria-label={s.label}
+                   target={s.href !== '#' ? '_blank' : undefined}
+                   rel={s.href !== '#' ? 'noopener noreferrer' : undefined}>{s.text}</a>
               ))}
             </div>
           </ScrollReveal>
