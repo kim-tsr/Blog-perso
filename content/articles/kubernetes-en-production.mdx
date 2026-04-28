@@ -1,0 +1,46 @@
+---
+title: "Déployer Kubernetes en production : le guide complet"
+slug: kubernetes-en-production
+date: "15 Avr 2026"
+read: "8 min"
+tag: Infrastructure
+theme: violet
+excerpt: "Les décisions d'architecture critiques pour un cluster Kubernetes résilient et sécurisé."
+---
+
+Kubernetes est devenu le standard de facto pour orchestrer des conteneurs en production. Mais déployer un cluster **résilient et sécurisé** demande bien plus que de suivre le Getting Started officiel. Dans cet article, on explore les décisions d'architecture critiques que vous devrez prendre.
+
+## Choisir sa distribution
+
+Avant même d'écrire votre premier manifest YAML, il faut choisir la distribution Kubernetes adaptée à votre contexte. **k3s** convient parfaitement aux homelab et aux edge devices, tandis que **RKE2** (Rancher) ou **Talos OS** s'orientent vers des environnements productifs où la sécurité est primordiale.
+
+```bash
+# Installer k3s en un seul nœud
+curl -sfL https://get.k3s.io | INSTALL_K3S_EXEC="--disable=traefik" sh -
+
+# Vérifier l'état du cluster
+kubectl get nodes -o wide
+```
+
+## Réseau et CNI
+
+Le choix du **Container Network Interface (CNI)** est crucial. **Cilium** s'est imposé comme le CNI le plus avancé : il repose sur eBPF pour observer et contrôler le trafic réseau à très bas niveau, sans passer par iptables. Ses NetworkPolicies avancées permettent une micro-segmentation fine, essentielle pour une approche Zero Trust.
+
+> Cilium dispose d'une interface Hubble qui offre une visibilité L7 complète sur chaque flux réseau entre pods — un atout majeur pour le troubleshooting et la sécurité.
+
+## Stockage persistant
+
+Pour les workloads stateful, **Longhorn** ou **Rook/Ceph** offrent un stockage distribué natif Kubernetes. Pour les environnements cloud, les CSI drivers des providers (AWS EBS, GCP Persistent Disk) restent la solution la plus simple. La clé : définir des **StorageClasses** avec des politiques de rétention explicites dès le départ.
+
+## Monitoring et observabilité
+
+Le stack **kube-prometheus + Grafana** est incontournable. Déployez-le via l'opérateur officiel `kube-prometheus-stack` avec Helm. Associez-y **Loki** pour les logs et **Tempo** pour le tracing distribué — vous obtenez la trilogie observabilité complète.
+
+```bash
+# Installer kube-prometheus-stack
+helm repo add prometheus-community \
+  https://prometheus-community.github.io/helm-charts
+helm install kube-prom \
+  prometheus-community/kube-prometheus-stack \
+  --namespace monitoring --create-namespace
+```
