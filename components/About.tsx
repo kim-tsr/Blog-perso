@@ -26,7 +26,7 @@ export default function About() {
                   <div className="photo-circle" aria-hidden="true">
                     <svg width="36" height="36" viewBox="0 0 36 36" fill="none"><circle cx="18" cy="13" r="7" stroke="#5f5b78" strokeWidth="1.5"/><path d="M4 32c0-7.732 6.268-14 14-14s14 6.268 14 14" stroke="#5f5b78" strokeWidth="1.5" strokeLinecap="round"/></svg>
                   </div>
-                  <span className="photo-txt">Votre photo</span>
+                  <span className="photo-txt">Kim Tessier</span>
                 </div>
               </div>
               <div className="about-glow" aria-hidden="true" />
@@ -43,7 +43,7 @@ export default function About() {
             </ScrollReveal>
             <ScrollReveal delay={0.3}>
               <div className="about-badges">
-                {['Kubernetes','Ansible','Terraform','Python','Zero Trust','Suricata','CI/CD','SIEM','WireGuard'].map(b => (
+                {['Kubernetes','Ansible','Terraform','Zero Trust','Proxmox','CI/CD','SIEM','WireGuard', 'Active Directory'].map(b => (
                   <span key={b} className="badge">{b}</span>
                 ))}
               </div>

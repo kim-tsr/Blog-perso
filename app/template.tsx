@@ -3,9 +3,11 @@ import { useEffect, useState } from 'react'
 import { motion } from 'framer-motion'
 import { usePathname } from 'next/navigation'
 import { getCatOrigin } from '@/lib/catOrigin'
+import { getPageOrigin } from '@/lib/pageOrigin'
 
 const isArticle  = (p: string) => p.startsWith('/articles/') && p !== '/articles'
 const isCategory = (p: string) => p.startsWith('/categories/')
+const isMainPage = (p: string) => ['/blog', '/projets', '/a-propos'].includes(p)
 
 export default function Template({ children }: { children: React.ReactNode }) {
   const path = usePathname()
@@ -14,6 +16,9 @@ export default function Template({ children }: { children: React.ReactNode }) {
   useEffect(() => {
     if (isCategory(path)) {
       const o = getCatOrigin()
+      if (o) setOrigin(o)
+    } else if (isMainPage(path)) {
+      const o = getPageOrigin()
       if (o) setOrigin(o)
     }
   }, [path])
@@ -30,7 +35,7 @@ export default function Template({ children }: { children: React.ReactNode }) {
     )
   }
 
-  if (isCategory(path)) {
+  if (isCategory(path) || isMainPage(path)) {
     const at = `${origin.x}% ${origin.y}%`
     return (
       <motion.div
