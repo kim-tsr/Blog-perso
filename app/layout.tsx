@@ -4,7 +4,6 @@ import './globals.css'
 import Nav from '@/components/Nav'
 import CustomCursor from '@/components/CustomCursor'
 import ScrollProgress from '@/components/ScrollProgress'
-import FxCanvas from '@/components/FxCanvas'
 
 const spaceGrotesk = Space_Grotesk({ subsets: ['latin'], weight: ['400','500','600','700'], variable: '--font-display' })
 const figtree      = Figtree({ subsets: ['latin'], weight: ['300','400','500','600'], variable: '--font-body' })
@@ -21,8 +20,7 @@ export default function RootLayout({ children }: { children: React.ReactNode }) 
       <body>
         <CustomCursor />
         <ScrollProgress />
-        <FxCanvas />
-        <Nav />
+<Nav />
         {children}
       </body>
     </html>
