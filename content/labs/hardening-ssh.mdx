@@ -1,0 +1,100 @@
+---
+title: "Hardening SSH : durcir l'accès à un serveur Linux"
+slug: hardening-ssh
+objective: "Désactiver les mots de passe, restreindre les utilisateurs, brancher fail2ban et auditer la config."
+tag: Cybersécurité
+theme: cyan
+difficulty: débutant
+duration: "20 min"
+prerequisites:
+  - "Un serveur Linux (Debian/Ubuntu) avec accès root"
+  - "Notions de sshd_config"
+tools:
+  - "OpenSSH"
+  - "fail2ban"
+  - "ssh-audit"
+---
+
+## 🎯 Objectif
+
+Transformer un SSH ouvert à tous les vents en un service durci : clés uniquement, MFA optionnelle, bannissement des bots, audit cryptographique.
+
+## 📋 Étape 1 — Générer et déployer une clé Ed25519
+
+Sur votre poste :
+
+```bash
+ssh-keygen -t ed25519 -C "kim@laptop"
+ssh-copy-id user@serveur
+```
+
+Testez : `ssh user@serveur` doit fonctionner **sans mot de passe**.
+
+## 📋 Étape 2 — Durcir sshd_config
+
+Éditez `/etc/ssh/sshd_config` :
+
+```text
+PermitRootLogin no
+PasswordAuthentication no
+PubkeyAuthentication yes
+KbdInteractiveAuthentication no
+ChallengeResponseAuthentication no
+AllowUsers kim
+MaxAuthTries 3
+LoginGraceTime 20
+ClientAliveInterval 300
+ClientAliveCountMax 2
+Protocol 2
+```
+
+> 💡 Gardez une seconde session SSH ouverte avant de redémarrer le service — c'est votre filet de sécurité si la config est mauvaise.
+
+```bash
+sudo sshd -t   # valide la syntaxe
+sudo systemctl restart ssh
+```
+
+## 📋 Étape 3 — Installer fail2ban
+
+```bash
+sudo apt install -y fail2ban
+sudo tee /etc/fail2ban/jail.d/ssh.local <<EOF
+[sshd]
+enabled = true
+port    = ssh
+maxretry = 4
+bantime  = 1h
+findtime = 10m
+EOF
+sudo systemctl restart fail2ban
+sudo fail2ban-client status sshd
+```
+
+## 📋 Étape 4 — Auditer la cryptographie
+
+```bash
+pip install --user ssh-audit
+~/.local/bin/ssh-audit serveur
+```
+
+L'outil note les algorithmes de chiffrement, MAC et KEX. Visez **A** ou **A+**. Désactivez les algorithmes faibles dans `sshd_config` :
+
+```text
+KexAlgorithms curve25519-sha256,curve25519-sha256@libssh.org
+Ciphers chacha20-poly1305@openssh.com,aes256-gcm@openssh.com
+MACs hmac-sha2-512-etm@openssh.com,hmac-sha2-256-etm@openssh.com
+```
+
+## ✅ Validation
+
+- `ssh root@serveur` → refusé
+- `ssh user@serveur` avec mot de passe → refusé
+- ssh-audit retourne **A**
+- 5 tentatives échouées → IP bannie 1 h
+
+## 🚀 Pour aller plus loin
+
+- Ajoutez **TOTP** avec `libpam-google-authenticator`
+- Limitez l'accès SSH à un VPN WireGuard (voir le lab dédié)
+- Centralisez les logs `auth.log` vers votre SIEM
