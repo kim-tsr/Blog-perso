@@ -1,0 +1,111 @@
+---
+title: "Maillage WireGuard entre 3 nœuds"
+slug: wireguard-mesh
+objective: "Construire un mesh VPN chiffré full-mesh entre 3 machines, tester la latence et la résilience."
+tag: Réseau
+theme: amber
+difficulty: intermédiaire
+duration: "30 min"
+prerequisites:
+  - "3 VPS Linux (Debian/Ubuntu) avec IP publique"
+  - "Notions de routage IP et NAT"
+tools:
+  - "WireGuard"
+  - "iproute2"
+  - "wg-quick"
+---
+
+## 🎯 Objectif
+
+Établir un **mesh** WireGuard où chaque nœud parle directement à chaque autre — pas de point central. Idéal pour un homelab distribué ou un cluster Kubernetes multi-site.
+
+## 📋 Étape 1 — Générer les paires de clés
+
+Sur chaque nœud (N1, N2, N3) :
+
+```bash
+sudo apt install -y wireguard
+wg genkey | tee privatekey | wg pubkey > publickey
+cat privatekey publickey
+```
+
+Notez les 3 clés publiques — vous en aurez besoin sur tous les nœuds.
+
+## 📋 Étape 2 — Configurer N1
+
+`/etc/wireguard/wg0.conf` sur N1 :
+
+```ini
+[Interface]
+PrivateKey = <PRIV_N1>
+Address    = 10.50.0.1/24
+ListenPort = 51820
+
+[Peer]
+# N2
+PublicKey  = <PUB_N2>
+AllowedIPs = 10.50.0.2/32
+Endpoint   = <IP_PUB_N2>:51820
+PersistentKeepalive = 25
+
+[Peer]
+# N3
+PublicKey  = <PUB_N3>
+AllowedIPs = 10.50.0.3/32
+Endpoint   = <IP_PUB_N3>:51820
+PersistentKeepalive = 25
+```
+
+Sur **chaque** autre nœud, créez un fichier équivalent avec son IP interne et les peers correspondants.
+
+> 💡 La clé d'un mesh : **chaque** nœud doit avoir **N-1** peers déclarés. Pas de hiérarchie.
+
+## 📋 Étape 3 — Démarrer le tunnel
+
+Sur les 3 nœuds :
+
+```bash
+sudo wg-quick up wg0
+sudo systemctl enable wg-quick@wg0
+```
+
+Ouvrez le port UDP 51820 dans le firewall :
+
+```bash
+sudo ufw allow 51820/udp
+```
+
+## 📋 Étape 4 — Tester
+
+Depuis N1 :
+
+```bash
+ping -c 3 10.50.0.2
+ping -c 3 10.50.0.3
+sudo wg show
+```
+
+`wg show` doit lister les 2 peers avec un `latest handshake` récent et du trafic dans `transfer`.
+
+## 📋 Étape 5 — Test de résilience
+
+Coupez WireGuard sur N1, puis testez depuis N2 vers N3 :
+
+```bash
+# Sur N2
+ping 10.50.0.3
+```
+
+Ça doit fonctionner — c'est tout l'intérêt du mesh par rapport à un hub-and-spoke.
+
+## ✅ Validation
+
+- 3 handshakes établis sur chaque nœud
+- Ping bi-directionnel entre tous les couples
+- N2 ↔ N3 fonctionne même quand N1 est down
+
+## 🚀 Pour aller plus loin
+
+- Automatisez avec **Ansible** : un playbook qui génère les clés et les configs depuis un inventaire
+- Ajoutez **BIRD** pour annoncer des préfixes en BGP sur le mesh
+- Migrez vers **Headscale** ou **Netbird** pour un control plane open-source

@@ -1,0 +1,91 @@
+---
+title: "Déployer un cluster k3s en 15 minutes"
+slug: k3s-en-15-minutes
+objective: "Monter un cluster Kubernetes léger fonctionnel, déployer une application, exposer un service via Traefik."
+tag: Infrastructure
+theme: violet
+difficulty: débutant
+duration: "15 min"
+prerequisites:
+  - "1 VM Linux (ou Raspberry Pi) avec accès root"
+  - "Connaissance basique de la ligne de commande"
+tools:
+  - "k3s"
+  - "kubectl"
+  - "Helm"
+---
+
+## 🎯 Objectif
+
+Après ce lab, vous aurez un cluster **k3s** fonctionnel, une application **whoami** déployée, et un service exposé via **Traefik** — l'ingress fourni par défaut. C'est le point de départ idéal pour tout futur lab Kubernetes.
+
+## 📋 Étape 1 — Installer k3s
+
+```bash
+curl -sfL https://get.k3s.io | sh -
+
+# Vérifier que le service tourne
+sudo systemctl status k3s
+```
+
+k3s installe kubectl automatiquement et configure `/etc/rancher/k3s/k3s.yaml`. Donnons-nous accès :
+
+```bash
+sudo chmod 644 /etc/rancher/k3s/k3s.yaml
+export KUBECONFIG=/etc/rancher/k3s/k3s.yaml
+kubectl get nodes
+```
+
+## 📋 Étape 2 — Déployer une application
+
+Créons un déploiement simple :
+
+```bash
+kubectl create deployment whoami --image=traefik/whoami
+kubectl expose deployment whoami --port=80
+```
+
+Vérifiez :
+
+```bash
+kubectl get pods,svc -l app=whoami
+```
+
+## 📋 Étape 3 — Exposer via Ingress
+
+Créez `ingress.yaml` :
+
+```yaml
+apiVersion: networking.k8s.io/v1
+kind: Ingress
+metadata:
+  name: whoami
+spec:
+  rules:
+    - host: whoami.local
+      http:
+        paths:
+          - path: /
+            pathType: Prefix
+            backend:
+              service:
+                name: whoami
+                port:
+                  number: 80
+```
+
+```bash
+kubectl apply -f ingress.yaml
+echo "$(hostname -I | awk '{print $1}') whoami.local" | sudo tee -a /etc/hosts
+curl http://whoami.local
+```
+
+## ✅ Validation
+
+Vous devez voir le hostname du pod et des en-têtes HTTP. Bravo — vous avez un cluster K8s, un déploiement, un service et un ingress fonctionnels.
+
+## 🚀 Pour aller plus loin
+
+- Ajoutez **MetalLB** pour un vrai LoadBalancer
+- Activez **k3s server --tls-san** pour exposer l'API au-delà du localhost
+- Passez à un cluster multi-node avec `k3s agent --server https://<master>:6443`

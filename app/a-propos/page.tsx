@@ -160,6 +160,87 @@ export default function AProposPage() {
 
         <div className="beam-sep" aria-hidden="true" />
 
+        {/* ── TIMELINE ── */}
+        <section className="section" style={{ background: 'var(--bg)' }}>
+          <style>{`
+            .ap-tl { position:relative; padding-left:42px; margin-top:50px; }
+            .ap-tl::before { content:''; position:absolute; left:11px; top:8px; bottom:8px; width:1px; background:linear-gradient(to bottom, var(--v), var(--c), var(--a), transparent); }
+            .ap-tl-item { position:relative; padding-bottom:42px; }
+            .ap-tl-item:last-child { padding-bottom:0; }
+            .ap-tl-dot { position:absolute; left:-37px; top:6px; width:12px; height:12px; border-radius:50%; border:2px solid var(--tl-col); background:var(--bg); box-shadow:0 0 0 4px var(--bg), 0 0 18px var(--tl-col); }
+            .ap-tl-date { font-family:var(--fm); font-size:11px; letter-spacing:.18em; text-transform:uppercase; color:var(--tl-col); margin-bottom:8px; }
+            .ap-tl-title { font-family:var(--fd); font-size:19px; font-weight:600; color:var(--text); letter-spacing:-.01em; margin-bottom:6px; }
+            .ap-tl-desc { font-size:14px; color:var(--mid); line-height:1.7; font-weight:300; max-width:560px; }
+            @media(max-width:768px) { .ap-tl { padding-left:28px; } .ap-tl::before { left:5px; } .ap-tl-dot { left:-26px; } }
+          `}</style>
+          <div className="container">
+            <ScrollReveal><div className="stag">Parcours</div></ScrollReveal>
+            <ScrollReveal clip>
+              <h2 className="stitle clip-inner">Quelques <span className="g">étapes</span></h2>
+            </ScrollReveal>
+            <div className="ap-tl">
+              {[
+                { date: '2026 — Aujourd\'hui', title: 'Lancement de dev.sec.ops', desc: 'Création du blog pour documenter mes recherches et expérimentations en DevSecOps. Premiers articles publiés sur Kubernetes, Zero Trust et SIEM.', col: 'var(--v)' },
+                { date: '2025 — Cybersécurité',  title: 'Spécialisation sécurité',  desc: 'Approfondissement de la cybersécurité défensive : SIEM (Wazuh/ELK), hardening Linux, IAM, audits Active Directory et architectures Zero Trust.', col: 'var(--c)' },
+                { date: '2024 — Cloud Native',   title: 'Kubernetes & Cloud Native', desc: 'Construction d\'un homelab complet : Proxmox, Kubernetes, ArgoCD, observabilité avec Prometheus/Grafana/Loki. Premières contributions open-source.', col: 'var(--v)' },
+                { date: '2023 — Réseau',         title: 'Fondations réseau',         desc: 'Maîtrise des protocoles : TCP/IP, routage dynamique (OSPF, BGP), VPN site-à-site, micro-segmentation et SDN.', col: 'var(--a)' },
+                { date: '2022 — Linux',          title: 'Système & Linux',           desc: 'Apprentissage approfondi de l\'administration système : automatisation Bash, services systemd, conteneurisation Docker, scripting Python.', col: 'var(--c)' },
+              ].map((it, i) => (
+                <ScrollReveal key={it.title} delay={i * 0.05}>
+                  <div className="ap-tl-item" style={{'--tl-col': it.col} as React.CSSProperties}>
+                    <span className="ap-tl-dot" aria-hidden="true" />
+                    <div className="ap-tl-date">{it.date}</div>
+                    <div className="ap-tl-title">{it.title}</div>
+                    <div className="ap-tl-desc">{it.desc}</div>
+                  </div>
+                </ScrollReveal>
+              ))}
+            </div>
+          </div>
+        </section>
+
+        <div className="beam-sep" aria-hidden="true" />
+
+        {/* ── STATS ── */}
+        <section className="section" style={{ background: 'var(--bg)', paddingTop: 80, paddingBottom: 80 }}>
+          <style>{`
+            .ap-stats { display:grid; grid-template-columns:repeat(4,1fr); gap:1px; background:var(--border); border:1px solid var(--border); border-radius:14px; overflow:hidden; }
+            @media(max-width:768px) { .ap-stats { grid-template-columns:repeat(2,1fr); } }
+            .ap-stat { background:var(--bg); padding:32px 28px; }
+            .ap-stat-num { font-family:var(--fd); font-size:42px; font-weight:700; line-height:1; letter-spacing:-.03em; }
+            .ap-stat-label { font-family:var(--fm); font-size:10px; letter-spacing:.16em; text-transform:uppercase; color:var(--dim); margin-top:12px; }
+            .ap-stat-detail { font-size:12px; color:var(--mid); margin-top:6px; }
+          `}</style>
+          <div className="container">
+            <ScrollReveal>
+              <div className="ap-stats">
+                <div className="ap-stat">
+                  <div className="ap-stat-num" style={{ color: 'var(--v)' }}>6+</div>
+                  <div className="ap-stat-label">Articles publiés</div>
+                  <div className="ap-stat-detail">Et la roadmap s&apos;étend.</div>
+                </div>
+                <div className="ap-stat">
+                  <div className="ap-stat-num" style={{ color: 'var(--c)' }}>3</div>
+                  <div className="ap-stat-label">Domaines</div>
+                  <div className="ap-stat-detail">Infra · Sécu · Réseau.</div>
+                </div>
+                <div className="ap-stat">
+                  <div className="ap-stat-num" style={{ color: 'var(--a)' }}>6</div>
+                  <div className="ap-stat-label">Projets actifs</div>
+                  <div className="ap-stat-detail">Open-source & homelab.</div>
+                </div>
+                <div className="ap-stat">
+                  <div className="ap-stat-num">4 ans</div>
+                  <div className="ap-stat-label">D&apos;exploration</div>
+                  <div className="ap-stat-detail">Linux → Cloud → SecOps.</div>
+                </div>
+              </div>
+            </ScrollReveal>
+          </div>
+        </section>
+
+        <div className="beam-sep" aria-hidden="true" />
+
         <Contact />
       </main>
       <Footer />

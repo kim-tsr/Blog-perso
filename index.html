@@ -1,0 +1,1178 @@
+<!DOCTYPE html>
+<html lang="fr">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>dev.sec.ops — Blog</title>
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link href="https://fonts.googleapis.com/css2?family=Space+Grotesk:wght@400;500;600;700&family=Figtree:ital,wght@0,300;0,400;0,500;0,600;1,300&family=Space+Mono:wght@400;700&display=swap" rel="stylesheet">
+<style>
+/* ── CURSOR ── */
+body { cursor: none; }
+#cur-dot {
+  position: fixed; width: 6px; height: 6px; border-radius: 50%;
+  background: #fff; pointer-events: none; z-index: 9999;
+  transform: translate(-50%,-50%);
+  transition: background .2s, transform .15s;
+  mix-blend-mode: difference;
+}
+#cur-ring {
+  position: fixed; width: 36px; height: 36px; border-radius: 50%;
+  border: 1.5px solid rgba(168,120,255,0.7);
+  pointer-events: none; z-index: 9998;
+  transform: translate(-50%,-50%);
+  transition: width .35s var(--ease), height .35s var(--ease),
+              border-color .3s, opacity .3s;
+}
+body:has(a:hover) #cur-ring,
+body:has(button:hover) #cur-ring,
+body:has(.ac:hover) #cur-ring,
+body:has(.pc:hover) #cur-ring {
+  width: 56px; height: 56px;
+  border-color: var(--v);
+}
+body:has(a:hover) #cur-dot,
+body:has(button:hover) #cur-dot { transform: translate(-50%,-50%) scale(2); }
+
+/* ── FX CANVAS ── */
+#fx-canvas {
+  position: fixed; inset: 0; z-index: 50;
+  pointer-events: none; opacity: 1;
+}
+
+/* ── SECTION BEAM SEPARATOR ── */
+.beam-sep {
+  height: 1px;
+  background: linear-gradient(90deg,transparent,var(--v),var(--c),transparent);
+  opacity: 0.4;
+  position: relative;
+}
+.beam-sep::after {
+  content: ''; position: absolute;
+  left: 50%; top: -4px; transform: translateX(-50%);
+  width: 200px; height: 9px;
+  background: radial-gradient(ellipse,oklch(0.68 0.24 280/.45),transparent 70%);
+  filter: blur(4px);
+}
+</style>
+<style>
+:root {
+  --bg:      #07070c;
+  --bg2:     #0c0c15;
+  --bg3:     #11111e;
+  --border:  rgba(255,255,255,0.07);
+  --text:    #ede9ff;
+  --dim:     #5f5b78;
+  --mid:     #9e9ab8;
+  --v:  oklch(0.68 0.24 280);
+  --c:  oklch(0.75 0.16 194);
+  --a:  oklch(0.76 0.16 65);
+  --gv: oklch(0.50 0.28 280 / 0.30);
+  --gc: oklch(0.50 0.18 194 / 0.22);
+  --ga: oklch(0.54 0.18 65  / 0.22);
+  --fd: 'Space Grotesk', sans-serif;
+  --fb: 'Figtree', sans-serif;
+  --fm: 'Space Mono', monospace;
+  --ease: cubic-bezier(0.16,1,0.3,1);
+}
+*,*::before,*::after{box-sizing:border-box;margin:0;padding:0;}
+html{scroll-behavior:smooth;}
+body{background:var(--bg);color:var(--text);font-family:var(--fb);font-size:16px;line-height:1.65;overflow-x:hidden;-webkit-font-smoothing:antialiased;}
+::-webkit-scrollbar{width:3px;}
+::-webkit-scrollbar-thumb{background:var(--v);border-radius:2px;}
+img,svg{display:block;}
+a{text-decoration:none;color:inherit;}
+
+/* ── PROGRESS ── */
+#progress{position:fixed;top:0;left:0;height:2px;background:linear-gradient(90deg,var(--v),var(--c));z-index:200;width:0%;transition:width 0.1s linear;}
+
+/* ── NOISE ── */
+body::after{content:'';position:fixed;inset:0;z-index:0;pointer-events:none;
+  background-image:url("data:image/svg+xml,%3Csvg viewBox='0 0 200 200' xmlns='http://www.w3.org/2000/svg'%3E%3Cfilter id='n'%3E%3CfeTurbulence type='fractalNoise' baseFrequency='0.85' numOctaves='4' stitchTiles='stitch'/%3E%3C/filter%3E%3Crect width='100%25' height='100%25' filter='url(%23n)'/%3E%3C/svg%3E");
+  opacity:0.022;}
+
+/* ── NAV ── */
+nav{position:fixed;top:0;left:0;right:0;z-index:100;padding:22px 48px;display:flex;align-items:center;justify-content:space-between;transition:background .4s,backdrop-filter .4s;}
+nav.scrolled{background:rgba(7,7,12,0.75);backdrop-filter:blur(24px);border-bottom:1px solid var(--border);}
+.nav-logo{font-family:var(--fd);font-size:16px;font-weight:700;letter-spacing:-0.02em;}
+.nav-logo b{color:var(--v);}
+.nav-links{display:flex;gap:32px;list-style:none;}
+.nav-links a{font-size:13px;font-weight:500;color:var(--dim);transition:color .2s;}
+.nav-links a:hover{color:var(--text);}
+.nav-cta{border:1px solid rgba(255,255,255,0.12);background:rgba(255,255,255,0.04);color:var(--text);padding:8px 22px;border-radius:100px;font-size:13px;font-weight:600;cursor:pointer;transition:border-color .2s,background .2s;}
+.nav-cta:hover{border-color:var(--v);background:oklch(0.68 0.24 280 / 0.1);}
+
+/* ── SIDE NAV ── */
+#side-nav{position:fixed;right:28px;left:auto;top:50%;width:auto;padding:0;border:none;background:transparent;transform:translateY(-50%);z-index:90;display:flex;flex-direction:column;gap:10px;align-items:center;}
+.sn-dot{width:5px;height:5px;border-radius:50%;background:var(--dim);cursor:pointer;transition:background .3s,transform .3s,height .3s;}
+.sn-dot.active{background:var(--v);transform:scaleX(1);height:20px;border-radius:3px;}
+.sn-label{position:absolute;right:18px;font-size:10px;font-family:var(--fm);color:var(--v);white-space:nowrap;opacity:0;transition:opacity .2s;pointer-events:none;}
+.sn-dot:hover .sn-label{opacity:1;}
+
+/* ── HERO ── */
+#hero{position:relative;min-height:100vh;display:flex;align-items:center;overflow:hidden;}
+#hero-canvas{position:absolute;inset:0;z-index:1;}
+.orb{position:absolute;border-radius:50%;filter:blur(90px);pointer-events:none;z-index:1;}
+.orb-1{width:700px;height:700px;background:oklch(0.48 0.28 280/0.18);top:-150px;right:-150px;animation:orbF 9s ease-in-out infinite alternate;}
+.orb-2{width:450px;height:450px;background:oklch(0.50 0.18 194/0.14);bottom:-100px;left:-80px;animation:orbF 11s ease-in-out infinite alternate-reverse;}
+.orb-3{width:300px;height:300px;background:oklch(0.50 0.18 65/0.10);top:40%;left:40%;animation:orbF 7s ease-in-out infinite alternate;}
+@keyframes orbF{to{transform:translate(50px,-40px) scale(1.15);}}
+
+.hero-inner{position:relative;z-index:2;padding:160px 0 100px;max-width:1000px;}
+.hero-eyebrow{display:flex;align-items:center;gap:10px;margin-bottom:32px;opacity:0;animation:fU .8s var(--ease) .2s forwards;}
+.hero-eyebrow span{font-family:var(--fm);font-size:10px;letter-spacing:.2em;color:var(--v);text-transform:uppercase;}
+.eyebrow-line{width:28px;height:1px;background:var(--v);}
+
+.hero-title{font-family:var(--fd);font-size:clamp(60px,8.5vw,110px);font-weight:700;line-height:.92;letter-spacing:-.04em;margin-bottom:36px;}
+.hero-word{display:inline-block;overflow:hidden;vertical-align:bottom;}
+.hero-word-inner{display:inline-block;transform:translateY(110%);opacity:0;animation:wordIn .9s var(--ease) forwards;}
+.hero-title .accent{color:transparent;-webkit-text-stroke:1px var(--v);}
+.hero-title .grad{background:linear-gradient(135deg,var(--v) 0%,var(--c) 100%);-webkit-background-clip:text;-webkit-text-fill-color:transparent;background-clip:text;}
+
+.hero-sub{font-size:18px;font-weight:300;color:var(--mid);max-width:500px;margin-bottom:52px;opacity:0;animation:fU .8s var(--ease) 1s forwards;}
+.hero-cursor-el{display:inline-block;width:2px;height:1em;background:var(--v);margin-left:2px;vertical-align:text-bottom;animation:blink 1s step-end infinite;}
+@keyframes blink{50%{opacity:0;}}
+
+.hero-btns{display:flex;gap:14px;flex-wrap:wrap;opacity:0;animation:fU .8s var(--ease) 1.1s forwards;}
+.btn-p{display:inline-flex;align-items:center;gap:8px;background:var(--v);color:#fff;padding:15px 30px;border-radius:100px;font-size:15px;font-weight:600;border:none;cursor:pointer;position:relative;overflow:hidden;transition:transform .25s var(--ease),box-shadow .3s;}
+.btn-p:hover{transform:translateY(-3px);box-shadow:0 12px 48px var(--gv);}
+.btn-p::after{content:'';position:absolute;inset:0;background:linear-gradient(135deg,rgba(255,255,255,.18),transparent);opacity:0;transition:opacity .2s;}
+.btn-p:hover::after{opacity:1;}
+.btn-g{display:inline-flex;align-items:center;gap:8px;background:transparent;color:var(--mid);padding:15px 30px;border-radius:100px;font-size:15px;font-weight:500;border:1px solid var(--border);cursor:pointer;transition:color .2s,border-color .2s,transform .25s var(--ease);}
+.btn-g:hover{color:var(--text);border-color:rgba(255,255,255,.2);transform:translateY(-3px);}
+
+.hero-scroll{position:absolute;bottom:32px;left:50%;transform:translateX(-50%);z-index:2;display:flex;flex-direction:column;align-items:center;gap:8px;opacity:0;animation:fU .8s var(--ease) 1.6s forwards;}
+.hero-scroll span{font-family:var(--fm);font-size:9px;letter-spacing:.25em;color:var(--dim);text-transform:uppercase;}
+.scroll-track{width:1px;height:40px;background:linear-gradient(to bottom,var(--dim),transparent);animation:scrollP 2s ease-in-out infinite;}
+@keyframes scrollP{0%,100%{opacity:.3;transform:scaleY(1);}50%{opacity:1;transform:scaleY(1.3);}}
+
+/* ── SECTIONS: seamless ── */
+.section{padding:130px 0;position:relative;}
+#about,#pillars,#articles,#contact{background:var(--bg);}
+
+.container{max-width:1120px;margin:0 auto;padding:0 48px;}
+
+/* ── REVEAL ANIMATIONS ── */
+.reveal{opacity:0;transform:translateY(48px);transition:opacity .9s var(--ease),transform .9s var(--ease);}
+.reveal.visible{opacity:1;transform:translateY(0);}
+.reveal-d1{transition-delay:.1s;} .reveal-d2{transition-delay:.2s;} .reveal-d3{transition-delay:.3s;} .reveal-d4{transition-delay:.4s;}
+
+/* clip reveal for big titles */
+.clip-wrap{overflow:hidden;}
+.clip-inner{transform:translateY(105%);transition:transform 1s var(--ease);}
+.clip-wrap.visible .clip-inner{transform:translateY(0);}
+.clip-d1 .clip-inner{transition-delay:.12s;}
+.clip-d2 .clip-inner{transition-delay:.24s;}
+
+/* split reveal */
+.split-line{overflow:hidden;display:block;}
+.split-line-inner{display:block;transform:translateY(105%);opacity:0;transition:transform .9s var(--ease),opacity .4s var(--ease);}
+.split-line.visible .split-line-inner{transform:translateY(0);opacity:1;}
+
+/* ── SECTION TAG ── */
+.stag{display:inline-flex;align-items:center;gap:8px;font-family:var(--fm);font-size:10px;letter-spacing:.18em;color:var(--v);text-transform:uppercase;margin-bottom:18px;}
+.stag::before{content:'';width:20px;height:1px;background:var(--v);}
+
+/* big section title */
+.stitle{font-family:var(--fd);font-size:clamp(38px,5vw,58px);font-weight:700;letter-spacing:-.03em;line-height:1.02;color:var(--text);margin-bottom:16px;}
+.stitle .g{background:linear-gradient(120deg,var(--v),var(--c));-webkit-background-clip:text;-webkit-text-fill-color:transparent;background-clip:text;}
+.ssub{font-size:17px;color:var(--mid);font-weight:300;max-width:460px;line-height:1.7;}
+
+/* ── ABOUT ── */
+.about-grid{display:grid;grid-template-columns:1fr 1.1fr;gap:96px;align-items:center;}
+.about-photo{position:relative;aspect-ratio:4/5;border-radius:20px;overflow:hidden;}
+.about-photo-bg{width:100%;height:100%;background:var(--bg3);border:1px solid var(--border);border-radius:20px;display:flex;align-items:center;justify-content:center;position:relative;overflow:hidden;}
+.about-photo-bg::before{content:'';position:absolute;inset:0;background:radial-gradient(circle at 30% 20%,oklch(0.50 0.28 280/.22),transparent 55%),radial-gradient(circle at 75% 80%,oklch(0.50 0.18 194/.14),transparent 55%);}
+.photo-ph{display:flex;flex-direction:column;align-items:center;gap:12px;position:relative;z-index:1;}
+.photo-circle{width:80px;height:80px;border-radius:50%;border:1px dashed var(--border);display:flex;align-items:center;justify-content:center;}
+.photo-txt{font-family:var(--fm);font-size:9px;letter-spacing:.15em;color:var(--dim);text-transform:uppercase;}
+.about-glow{position:absolute;bottom:-30px;right:-30px;width:180px;height:180px;border-radius:50%;background:var(--gv);filter:blur(50px);z-index:-1;}
+
+.about-text .stag{margin-bottom:22px;}
+.about-badges{display:flex;flex-wrap:wrap;gap:8px;margin-top:30px;}
+.badge{background:rgba(255,255,255,.04);border:1px solid var(--border);color:var(--mid);font-size:12px;font-weight:500;padding:5px 14px;border-radius:100px;transition:border-color .2s,color .2s;}
+.badge:hover{border-color:oklch(0.68 0.24 280/.5);color:var(--text);}
+
+/* ── PILLARS ── */
+.pillars-row{display:grid;grid-template-columns:repeat(3,1fr);gap:18px;margin-top:72px;}
+.pc{position:relative;padding:40px 36px;border-radius:14px;background:rgba(255,255,255,.03);border:1px solid var(--border);overflow:hidden;cursor:default;
+  transition:border-color .4s,transform .5s var(--ease),box-shadow .4s;
+  transform-style:preserve-3d;will-change:transform;}
+.pc::before{content:'';position:absolute;inset:0;background:var(--pc-glow,transparent);opacity:0;transition:opacity .4s;border-radius:inherit;}
+.pc::after{content:'';position:absolute;top:0;left:0;right:0;height:1px;background:linear-gradient(90deg,transparent,var(--pc-col),transparent);opacity:0;transition:opacity .4s;}
+.pc:hover{transform:translateY(-8px) perspective(800px);border-color:var(--pc-border);}
+.pc:hover::before,.pc:hover::after{opacity:1;}
+.pc:nth-child(1){--pc-col:var(--v);--pc-border:oklch(0.68 0.24 280/.45);--pc-glow:radial-gradient(circle at 40% 0%,oklch(0.50 0.28 280/.2),transparent 70%);}
+.pc:nth-child(2){--pc-col:var(--c);--pc-border:oklch(0.75 0.16 194/.45);--pc-glow:radial-gradient(circle at 40% 0%,oklch(0.50 0.18 194/.18),transparent 70%);}
+.pc:nth-child(3){--pc-col:var(--a);--pc-border:oklch(0.76 0.16 65/.45); --pc-glow:radial-gradient(circle at 40% 0%,oklch(0.54 0.18 65/.18),transparent 70%);}
+
+.pc-num{font-family:var(--fm);font-size:11px;letter-spacing:.12em;color:var(--pc-col);margin-bottom:24px;display:block;}
+.pc-icon{width:50px;height:50px;border-radius:12px;background:oklch(from var(--pc-col) l c h/.12);border:1px solid oklch(from var(--pc-col) l c h/.2);display:flex;align-items:center;justify-content:center;margin-bottom:22px;transition:background .3s;}
+.pc:hover .pc-icon{background:oklch(from var(--pc-col) l c h/.22);}
+.pc-title{font-family:var(--fd);font-size:22px;font-weight:700;letter-spacing:-.02em;color:var(--text);margin-bottom:12px;}
+.pc-desc{font-size:14px;color:var(--mid);line-height:1.75;font-weight:300;}
+.pc-link{display:inline-flex;align-items:center;gap:6px;margin-top:28px;font-size:13px;font-weight:600;color:var(--pc-col);transition:gap .2s;}
+.pc-link:hover{gap:10px;}
+
+/* shine sweep on card */
+.pc-shine{position:absolute;inset:0;background:linear-gradient(105deg,transparent 40%,rgba(255,255,255,.05) 50%,transparent 60%);transform:translateX(-100%);transition:transform .6s var(--ease);pointer-events:none;border-radius:inherit;}
+.pc:hover .pc-shine{transform:translateX(100%);}
+
+/* ── ARTICLES ── */
+.articles-head{display:flex;justify-content:space-between;align-items:flex-end;margin-bottom:60px;}
+.articles-grid{display:grid;grid-template-columns:repeat(3,1fr);gap:22px;}
+.ac{background:rgba(255,255,255,0.03);border:1px solid var(--border);border-radius:14px;overflow:hidden;cursor:pointer;
+  transform-style:preserve-3d;will-change:transform;
+  transition:border-color .4s,box-shadow .4s,transform .5s var(--ease);}
+.ac:hover{border-color:rgba(255,255,255,.14);box-shadow:0 24px 64px rgba(0,0,0,.6);}
+.ac-thumb{height:210px;position:relative;overflow:hidden;}
+.ac-thumb-inner{width:100%;height:100%;display:flex;align-items:center;justify-content:center;transition:transform .6s var(--ease);}
+.ac:hover .ac-thumb-inner{transform:scale(1.06);}
+.ac-tl{font-family:var(--fm);font-size:9px;letter-spacing:.14em;color:rgba(255,255,255,.3);text-transform:uppercase;}
+.t-v{background:linear-gradient(135deg,oklch(.14 .16 280),oklch(.08 .06 280));}
+.t-c{background:linear-gradient(135deg,oklch(.12 .12 194),oklch(.08 .04 194));}
+.t-a{background:linear-gradient(135deg,oklch(.15 .12 65), oklch(.08 .04 65));}
+.ac-body{padding:26px;}
+.ac-tag{font-family:var(--fm);font-size:10px;letter-spacing:.1em;text-transform:uppercase;margin-bottom:10px;}
+.ac-tag.tv{color:var(--v);} .ac-tag.tc{color:var(--c);} .ac-tag.ta{color:var(--a);}
+.ac-title{font-family:var(--fd);font-size:16px;font-weight:700;letter-spacing:-.015em;line-height:1.35;color:var(--text);margin-bottom:10px;}
+.ac-meta{display:flex;justify-content:space-between;font-size:11px;color:var(--dim);margin-top:18px;padding-top:18px;border-top:1px solid var(--border);font-family:var(--fm);}
+
+/* ── CONTACT ── */
+.contact-wrap{max-width:640px;margin:0 auto;text-align:center;}
+.contact-wrap .stag{justify-content:center;}
+.contact-wrap .stag::before{display:none;}
+.contact-big{font-family:var(--fd);font-size:clamp(44px,5.5vw,72px);font-weight:700;letter-spacing:-.04em;line-height:.96;color:var(--text);margin-bottom:22px;}
+.contact-big .g{background:linear-gradient(135deg,var(--v),var(--c));-webkit-background-clip:text;-webkit-text-fill-color:transparent;background-clip:text;}
+.contact-sub{font-size:17px;color:var(--mid);font-weight:300;margin-bottom:52px;}
+.sub-form{display:flex;gap:10px;max-width:460px;margin:0 auto 44px;}
+.sub-input{flex:1;background:rgba(255,255,255,.05);border:1px solid var(--border);border-radius:100px;color:var(--text);font-family:var(--fb);font-size:15px;padding:14px 24px;outline:none;transition:border-color .2s,background .2s;}
+.sub-input:focus{border-color:var(--v);background:rgba(255,255,255,.08);}
+.sub-input::placeholder{color:var(--dim);}
+.socials{display:flex;gap:14px;justify-content:center;}
+.soc{width:46px;height:46px;border-radius:50%;background:rgba(255,255,255,.04);border:1px solid var(--border);display:flex;align-items:center;justify-content:center;color:var(--dim);font-family:var(--fm);font-size:10px;font-weight:700;transition:border-color .2s,color .2s,background .2s,transform .25s var(--ease);}
+.soc:hover{border-color:var(--v);color:var(--text);background:oklch(0.68 0.24 280/.1);transform:translateY(-4px);}
+
+/* ── FOOTER ── */
+footer{border-top:1px solid var(--border);padding:28px 48px;display:flex;align-items:center;justify-content:space-between;background:var(--bg);}
+.fl{font-family:var(--fd);font-size:14px;font-weight:700;letter-spacing:-.01em;}
+.fl b{color:var(--v);}
+.fc{font-family:var(--fm);font-size:11px;color:var(--dim);}
+
+/* ── CATEGORY OVERLAY ── */
+#cat-overlay {
+  position: fixed; inset: 0; z-index: 300;
+  background: var(--bg); overflow-y: auto;
+  clip-path: circle(0% at var(--cat-x, 50%) var(--cat-y, 50%));
+  transition: clip-path .7s cubic-bezier(0.16,1,0.3,1);
+}
+#cat-overlay.open {
+  clip-path: circle(170% at var(--cat-x, 50%) var(--cat-y, 50%));
+}
+.cat-hero {
+  padding: 90px 0 60px;
+  border-bottom: 1px solid var(--border);
+  position: relative; overflow: hidden;
+}
+.cat-hero::before {
+  content: '';
+  position: absolute; inset: 0;
+  background: radial-gradient(ellipse at 20% 60%, var(--cat-glow, oklch(0.50 0.28 280/.18)), transparent 65%);
+  pointer-events: none;
+}
+.cat-hero-inner { max-width: 760px; margin: 0 auto; padding: 0 48px; }
+.cat-hero-inner .ao-title {
+  font-size: clamp(44px,6vw,80px);
+  background: linear-gradient(135deg, var(--cat-col, var(--v)), var(--text));
+  -webkit-background-clip: text; -webkit-text-fill-color: transparent; background-clip: text;
+}
+.cat-desc-text { font-size: 17px; color: var(--mid); font-weight: 300; margin-top: 12px; }
+.cat-grid { max-width: 1120px; margin: 0 auto; padding: 64px 48px 100px;
+  display: grid; grid-template-columns: repeat(3,1fr); gap: 22px; }
+@media(max-width:768px){
+  .cat-grid { grid-template-columns: 1fr; padding: 32px 24px 80px; }
+  .cat-hero-inner { padding: 0 24px; }
+}
+#art-overlay{position:fixed;inset:0;z-index:300;background:var(--bg);overflow-y:auto;
+  transform:translateY(100%);opacity:0;
+  transition:transform .7s var(--ease),opacity .5s var(--ease);}
+#art-overlay.open{transform:translateY(0);opacity:1;}
+.ao-nav{position:sticky;top:0;background:rgba(7,7,12,.85);backdrop-filter:blur(20px);border-bottom:1px solid var(--border);padding:18px 48px;display:flex;align-items:center;justify-content:space-between;z-index:10;}
+.ao-back{display:inline-flex;align-items:center;gap:8px;color:var(--mid);font-size:14px;font-weight:500;cursor:pointer;transition:color .2s;background:none;border:none;}
+.ao-back:hover{color:var(--text);}
+.ao-logo{font-family:var(--fd);font-size:14px;font-weight:700;}
+.ao-logo b{color:var(--v);}
+
+.ao-hero{padding:80px 0 60px;border-bottom:1px solid var(--border);margin-bottom:0;}
+.ao-hero-inner{max-width:760px;margin:0 auto;padding:0 48px;}
+.ao-tag{font-family:var(--fm);font-size:10px;letter-spacing:.18em;text-transform:uppercase;margin-bottom:18px;}
+.ao-title{font-family:var(--fd);font-size:clamp(32px,5vw,56px);font-weight:700;letter-spacing:-.03em;line-height:1.05;color:var(--text);margin-bottom:24px;}
+.ao-meta{display:flex;gap:20px;font-family:var(--fm);font-size:11px;color:var(--dim);}
+.ao-meta span{display:flex;align-items:center;gap:6px;}
+
+.ao-body{max-width:760px;margin:0 auto;padding:60px 48px 100px;}
+.ao-body p{font-size:17px;font-weight:300;color:var(--mid);line-height:1.85;margin-bottom:26px;}
+.ao-body p strong{color:var(--text);font-weight:600;}
+.ao-body h2{font-family:var(--fd);font-size:24px;font-weight:700;letter-spacing:-.02em;color:var(--text);margin:44px 0 16px;}
+.ao-body h2::before{content:'## ';color:var(--v);font-family:var(--fm);font-size:14px;}
+.ao-code{background:var(--bg2);border:1px solid var(--border);border-radius:10px;padding:22px 24px;margin:28px 0;overflow-x:auto;}
+.ao-code code{font-family:var(--fm);font-size:13px;color:var(--c);line-height:1.9;white-space:pre;}
+.ao-callout{background:oklch(0.68 0.24 280/.08);border:1px solid oklch(0.68 0.24 280/.25);border-radius:10px;padding:22px 24px;margin:28px 0;}
+.ao-callout p{margin:0;color:var(--mid);}
+.ao-callout p::before{content:'💡 ';font-size:16px;}
+
+@keyframes fU{to{opacity:1;transform:translateY(0);}}
+@keyframes wordIn{to{transform:translateY(0);opacity:1;}}
+
+/* responsive */
+@media(max-width:768px){
+  nav{padding:16px 24px;} .nav-links{display:none;} .container{padding:0 24px;}
+  .about-grid{grid-template-columns:1fr;gap:48px;}
+  .pillars-row{grid-template-columns:1fr;}
+  .articles-grid{grid-template-columns:1fr;}
+  .articles-head{flex-direction:column;align-items:flex-start;gap:20px;}
+  footer{flex-direction:column;gap:8px;text-align:center;padding:24px;}
+  .ao-nav,.ao-hero-inner,.ao-body{padding-left:24px;padding-right:24px;}
+  #side-nav{display:none;} /* hidden at mobile */
+}
+</style>
+</head>
+<body>
+
+<div id="progress" aria-hidden="true"></div>
+<div id="cur-dot" aria-hidden="true"></div>
+<div id="cur-ring" aria-hidden="true"></div>
+<canvas id="fx-canvas" aria-hidden="true"></canvas>
+
+<!-- NAV -->
+<nav id="nav">
+  <a href="#" class="nav-logo">dev.<b>sec</b>.ops</a>
+  <ul class="nav-links">
+    <li><a href="#about">À propos</a></li>
+    <li><a href="#pillars">Pilliers</a></li>
+    <li><a href="#articles">Articles</a></li>
+    <li><a href="#contact">Contact</a></li>
+  </ul>
+  <a href="#contact" class="nav-cta">S'abonner</a>
+</nav>
+
+<!-- SIDE NAV -->
+<nav id="side-nav" aria-label="Navigation par section">
+  <div class="sn-dot active" data-target="hero" tabindex="0" aria-label="Hero"></div>
+  <div class="sn-dot" data-target="about" tabindex="0" aria-label="À propos"></div>
+  <div class="sn-dot" data-target="pillars" tabindex="0" aria-label="Pilliers"></div>
+  <div class="sn-dot" data-target="articles" tabindex="0" aria-label="Articles"></div>
+  <div class="sn-dot" data-target="contact" tabindex="0" aria-label="Contact"></div>
+</nav>
+
+<!-- HERO -->
+<section id="hero" data-section="hero">
+  <canvas id="hero-canvas" aria-hidden="true"></canvas>
+  <div class="orb orb-1" aria-hidden="true"></div>
+  <div class="orb orb-2" aria-hidden="true"></div>
+  <div class="orb orb-3" aria-hidden="true"></div>
+
+  <div class="container">
+    <div class="hero-inner">
+      <div class="hero-eyebrow">
+        <div class="eyebrow-line"></div>
+        <span>Blog DevSecOps — Infrastructure &amp; Sécurité</span>
+      </div>
+      <h1 class="hero-title" aria-label="Comprendre. Sécuriser. Partager.">
+        <span class="hero-word"><span class="hero-word-inner" style="animation-delay:.35s">Comprendre.</span></span><br>
+        <span class="hero-word"><span class="hero-word-inner accent" style="animation-delay:.55s">Sécuriser.</span></span><br>
+        <span class="hero-word"><span class="hero-word-inner grad" style="animation-delay:.75s">Partager.</span></span>
+      </h1>
+      <p class="hero-sub">
+        <span id="tw" aria-label="Tutoriels sur l'infrastructure, la cybersécurité et les réseaux"></span><span class="hero-cursor-el" aria-hidden="true"></span>
+      </p>
+      <div class="hero-btns">
+        <a href="#articles" class="btn-p" id="cta-main">
+          Explorer les articles
+          <svg width="13" height="13" viewBox="0 0 13 13" fill="none" aria-hidden="true"><path d="M2 6.5h9M8 3l3.5 3.5L8 10" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round"/></svg>
+        </a>
+        <a href="#about" class="btn-g">À propos</a>
+      </div>
+    </div>
+  </div>
+
+</section>
+
+<!-- ABOUT -->
+<div class="beam-sep" aria-hidden="true"></div>
+<section id="about" class="section" data-section="about">
+  <div class="container">
+    <div class="about-grid">
+      <div class="about-photo reveal" role="img" aria-label="Emplacement pour votre photo de profil">
+        <div class="about-photo-bg">
+          <div class="photo-ph">
+            <div class="photo-circle" aria-hidden="true">
+              <svg width="36" height="36" viewBox="0 0 36 36" fill="none"><circle cx="18" cy="13" r="7" stroke="#5f5b78" stroke-width="1.5"/><path d="M4 32c0-7.732 6.268-14 14-14s14 6.268 14 14" stroke="#5f5b78" stroke-width="1.5" stroke-linecap="round"/></svg>
+            </div>
+            <span class="photo-txt">Votre photo</span>
+          </div>
+        </div>
+        <div class="about-glow" aria-hidden="true"></div>
+      </div>
+      <div class="about-text">
+        <div class="stag reveal">À propos</div>
+        <h2 class="stitle">
+          <span class="split-line reveal-d1"><span class="split-line-inner">Étudiant Ingénieur</span></span>
+          <span class="split-line reveal-d2"><span class="split-line-inner"><span class="g">DevSecOps</span></span></span>
+        </h2>
+        <p class="ssub reveal reveal-d2">Passionné par l'architecture des systèmes sécurisés, je partage ici mes explorations sur l'infrastructure, la cybersécurité et les réseaux.</p>
+        <div class="about-badges reveal reveal-d3">
+          <span class="badge">Kubernetes</span><span class="badge">Ansible</span><span class="badge">Terraform</span>
+          <span class="badge">Python</span><span class="badge">Zero Trust</span><span class="badge">Suricata</span>
+          <span class="badge">CI/CD</span><span class="badge">SIEM</span><span class="badge">WireGuard</span>
+        </div>
+      </div>
+    </div>
+  </div>
+</section>
+
+<!-- PILLARS -->
+<div class="beam-sep" aria-hidden="true"></div>
+<section id="pillars" class="section" data-section="pillars">
+  <div class="container">
+    <div class="reveal"><div class="stag">Les Pilliers</div></div>
+    <div class="clip-wrap reveal">
+      <h2 class="stitle clip-inner">L'architecture<br>du blog</h2>
+    </div>
+    <div class="pillars-row">
+      <div class="pc reveal reveal-d1" role="button" tabindex="0" onclick="openCat('infra',event)" onkeypress="if(event.key==='Enter')openCat('infra',event)" aria-label="Explorer Infrastructure" style="cursor:pointer">
+        <div class="pc-shine" aria-hidden="true"></div>
+        <span class="pc-num">01</span>
+        <div class="pc-icon" aria-hidden="true">
+          <svg width="22" height="22" viewBox="0 0 22 22" fill="none" stroke="currentColor" style="color:var(--v)" stroke-width="1.5" stroke-linecap="round"><rect x="2" y="2" width="8" height="8" rx="2"/><rect x="12" y="2" width="8" height="8" rx="2"/><rect x="2" y="12" width="8" height="8" rx="2"/><rect x="12" y="12" width="8" height="8" rx="2"/></svg>
+        </div>
+        <h3 class="pc-title">Infrastructure</h3>
+        <p class="pc-desc">Kubernetes, Terraform, CI/CD, containers — les fondations d'une infrastructure moderne, résiliente et automatisée.</p>
+        <a href="#articles" class="pc-link" aria-label="Explorer Infrastructure">Explorer <svg width="12" height="12" viewBox="0 0 12 12" fill="none" aria-hidden="true"><path d="M2 6h8M7 3l3 3-3 3" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round"/></svg></a>
+      </div>
+
+      <div class="pc reveal reveal-d2" role="button" tabindex="0" onclick="openCat('sec',event)" onkeypress="if(event.key==='Enter')openCat('sec',event)" aria-label="Explorer Cybersécurité" style="cursor:pointer">
+        <div class="pc-shine" aria-hidden="true"></div>
+        <span class="pc-num">02</span>
+        <div class="pc-icon" aria-hidden="true">
+          <svg width="22" height="22" viewBox="0 0 22 22" fill="none" stroke="currentColor" style="color:var(--c)" stroke-width="1.5" stroke-linecap="round"><path d="M11 2L3 6v5c0 4.418 3.358 8.547 8 9.5C16.642 19.547 20 15.418 20 11V6L11 2z"/></svg>
+        </div>
+        <h3 class="pc-title">Cybersécurité</h3>
+        <p class="pc-desc">Zero Trust, SIEM, détection d'intrusion, hardening — sécuriser les systèmes sans compromis sur la fluidité.</p>
+        <a href="#articles" class="pc-link" style="color:var(--c)" aria-label="Explorer Cybersécurité">Explorer <svg width="12" height="12" viewBox="0 0 12 12" fill="none" aria-hidden="true"><path d="M2 6h8M7 3l3 3-3 3" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round"/></svg></a>
+      </div>
+
+      <div class="pc reveal reveal-d3" role="button" tabindex="0" onclick="openCat('reseau',event)" onkeypress="if(event.key==='Enter')openCat('reseau',event)" aria-label="Explorer Réseau" style="cursor:pointer">
+        <div class="pc-shine" aria-hidden="true"></div>
+        <span class="pc-num">03</span>
+        <div class="pc-icon" aria-hidden="true">
+          <svg width="22" height="22" viewBox="0 0 22 22" fill="none" stroke="currentColor" style="color:var(--a)" stroke-width="1.5" stroke-linecap="round"><circle cx="11" cy="11" r="3"/><path d="M11 2v3M11 17v3M2 11h3M17 11h3M4.93 4.93l2.12 2.12M14.95 14.95l2.12 2.12M4.93 17.07l2.12-2.12M14.95 7.05l2.12-2.12"/></svg>
+        </div>
+        <h3 class="pc-title">Réseau</h3>
+        <p class="pc-desc">Routage, VPN, SDN, firewall — comprendre et maîtriser les flux réseau dans des architectures distribuées.</p>
+        <a href="#articles" class="pc-link" style="color:var(--a)" aria-label="Explorer Réseau">Explorer <svg width="12" height="12" viewBox="0 0 12 12" fill="none" aria-hidden="true"><path d="M2 6h8M7 3l3 3-3 3" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round"/></svg></a>
+      </div>
+    </div>
+  </div>
+</section>
+
+<!-- ARTICLES -->
+<div class="beam-sep" aria-hidden="true"></div>
+<section id="articles" class="section" data-section="articles">
+  <div class="container">
+    <div class="articles-head reveal">
+      <div>
+        <div class="stag">Base de connaissances</div>
+        <h2 class="stitle">Derniers articles</h2>
+      </div>
+      <a href="#" class="btn-g" aria-label="Voir tous les articles">Tous les articles <svg width="12" height="12" viewBox="0 0 12 12" fill="none" aria-hidden="true"><path d="M2 6h8M7 3l3 3-3 3" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round"/></svg></a>
+    </div>
+    <div class="articles-grid" id="articles-grid"></div>
+  </div>
+</section>
+
+<!-- CONTACT -->
+<section id="contact" class="section" data-section="contact">
+  <div class="container">
+    <div class="contact-wrap">
+      <div class="stag reveal">Newsletter</div>
+      <h2 class="contact-big reveal reveal-d1">Apprendre<br>ensemble,<br><span class="g">continûment</span></h2>
+      <p class="contact-sub reveal reveal-d2">Un article chaque semaine. Du contenu technique soigné, sans spam.</p>
+      <form class="sub-form reveal reveal-d3" onsubmit="handleSub(event)" aria-label="Formulaire d'abonnement">
+        <input type="email" class="sub-input" placeholder="votre@email.com" required aria-label="Adresse e-mail">
+        <button type="submit" class="btn-p" aria-label="S'abonner">S'abonner</button>
+      </form>
+      <div class="socials reveal reveal-d4">
+        <a href="#" class="soc" aria-label="GitHub">GH</a>
+        <a href="#" class="soc" aria-label="LinkedIn">LI</a>
+        <a href="#" class="soc" aria-label="Twitter / X">TW</a>
+        <a href="#" class="soc" aria-label="Flux RSS">RSS</a>
+      </div>
+    </div>
+  </div>
+</section>
+
+<footer>
+  <span class="fl">dev.<b>sec</b>.ops</span>
+  <span class="fc">© 2026 — Fait avec rigueur &amp; curiosité</span>
+</footer>
+
+<!-- CATEGORY OVERLAY -->
+<div id="cat-overlay" role="dialog" aria-modal="true" aria-label="Catégorie d'articles">
+  <nav class="ao-nav">
+    <button class="ao-back" onclick="closeCat()" aria-label="Retour à l'accueil">
+      <svg width="16" height="16" viewBox="0 0 16 16" fill="none" aria-hidden="true"><path d="M10 3L5 8l5 5" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round"/></svg>
+      Retour
+    </button>
+    <span class="ao-logo">dev.<b>sec</b>.ops</span>
+    <div style="width:80px"></div>
+  </nav>
+  <div class="cat-hero">
+    <div class="cat-hero-inner">
+      <div id="cat-tag" class="ao-tag"></div>
+      <h1 id="cat-title" class="ao-title"></h1>
+      <p id="cat-desc-text" class="cat-desc-text"></p>
+    </div>
+  </div>
+  <div class="cat-grid" id="cat-grid"></div>
+</div>
+
+<!-- ARTICLE OVERLAY -->
+<div id="art-overlay" role="dialog" aria-modal="true" aria-label="Article">
+  <nav class="ao-nav">
+    <button class="ao-back" onclick="closeArticle()" aria-label="Retour à l'accueil">
+      <svg width="16" height="16" viewBox="0 0 16 16" fill="none" aria-hidden="true"><path d="M10 3L5 8l5 5" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round"/></svg>
+      Retour
+    </button>
+    <span class="ao-logo">dev.<b>sec</b>.ops</span>
+    <div style="width:80px"></div>
+  </nav>
+  <div class="ao-hero">
+    <div class="ao-hero-inner">
+      <div id="ao-tag" class="ao-tag"></div>
+      <h1 id="ao-title" class="ao-title"></h1>
+      <div id="ao-meta" class="ao-meta"></div>
+    </div>
+  </div>
+  <div id="ao-body" class="ao-body"></div>
+</div>
+
+<!-- ── SCRIPTS ── -->
+<script>
+/* ─── ARTICLES DATA ─── */
+const ARTS = [
+  {
+    id:1, tag:'Infrastructure', tc:'tv', thumb:'t-v', tl:'infrastructure',
+    date:'15 Avr 2026', read:'8 min',
+    title:'Déployer Kubernetes en production : le guide complet',
+    content:`
+<p>Kubernetes est devenu le standard de facto pour orchestrer des conteneurs en production. Mais déployer un cluster <strong>résilient et sécurisé</strong> demande bien plus que de suivre le Getting Started officiel. Dans cet article, on explore les décisions d'architecture critiques que vous devrez prendre.</p>
+<h2>Choisir sa distribution</h2>
+<p>Avant même d'écrire votre premier manifest YAML, il faut choisir la distribution Kubernetes adaptée à votre contexte. <strong>k3s</strong> convient parfaitement aux homelab et aux edges devices, tandis que <strong>RKE2</strong> (Rancher) ou <strong>Talos OS</strong> s'orientent vers des environnements productifs où la sécurité est primordiale.</p>
+<div class="ao-code"><code># Installer k3s en un seul nœud
+curl -sfL https://get.k3s.io | INSTALL_K3S_EXEC="--disable=traefik" sh -
+
+# Vérifier l'état du cluster
+kubectl get nodes -o wide</code></div>
+<h2>Réseau et CNI</h2>
+<p>Le choix du <strong>Container Network Interface (CNI)</strong> est crucial. <strong>Cilium</strong> s'est imposé comme le CNI le plus avancé : il repose sur eBPF pour observer et contrôler le trafic réseau à très bas niveau, sans passer par iptables. Ses NetworkPolicies avancées permettent une micro-segmentation fine, essentielle pour une approche Zero Trust.</p>
+<div class="ao-callout"><p>Cilium dispose d'une interface Hubble qui offre une visibilité L7 complète sur chaque flux réseau entre pods — un atout majeur pour le troubleshooting et la sécurité.</p></div>
+<h2>Stockage persistant</h2>
+<p>Pour les workloads stateful, <strong>Longhorn</strong> ou <strong>Rook/Ceph</strong> offrent un stockage distribué natif Kubernetes. Pour les environnements cloud, les CSI drivers des providers (AWS EBS, GCP Persistent Disk) restent la solution la plus simple. La clé : définir des <strong>StorageClasses</strong> avec des politiques de rétention explicites dès le départ.</p>
+<h2>Monitoring et observabilité</h2>
+<p>Le stack <strong>kube-prometheus + Grafana</strong> est incontournable. Déployez-le via l'opérateur officiel <code>kube-prometheus-stack</code> avec Helm. Associez-y <strong>Loki</strong> pour les logs et <strong>Tempo</strong> pour le tracing distribué — vous obtenez la trilogie observabilité complète.</p>
+<div class="ao-code"><code># Installer kube-prometheus-stack
+helm repo add prometheus-community \\
+  https://prometheus-community.github.io/helm-charts
+helm install kube-prom \\
+  prometheus-community/kube-prometheus-stack \\
+  --namespace monitoring --create-namespace</code></div>
+`
+  },
+  {
+    id:2, tag:'Cybersécurité', tc:'tc', thumb:'t-c', tl:'sécurité',
+    date:'8 Avr 2026', read:'12 min',
+    title:'Zero Trust en pratique : implémenter BeyondCorp dans son infra',
+    content:`
+<p>Le modèle <strong>Zero Trust</strong> repose sur un principe simple mais radical : ne jamais faire confiance, toujours vérifier. Ni le réseau, ni l'identité, ni la position géographique ne constituent une preuve de légitimité. Dans cet article, on pose les bases d'une implémentation concrète.</p>
+<h2>Les cinq piliers du Zero Trust</h2>
+<p>Le NIST SP 800-207 identifie cinq piliers : <strong>Identité</strong>, <strong>Appareil</strong>, <strong>Réseau</strong>, <strong>Charge de travail</strong>, et <strong>Données</strong>. Une stratégie Zero Trust mature doit adresser chacun de ces plans. La plupart des organisations commencent par l'identité — c'est le vecteur d'attaque numéro un.</p>
+<div class="ao-callout"><p>80% des violations de données impliquent des identifiants compromis ou volés. Renforcer l'identité via le MFA et les politiques d'accès adaptatif est votre premier investissement Zero Trust.</p></div>
+<h2>Identity Provider et SSO</h2>
+<p><strong>Keycloak</strong> est l'IdP open source de référence. Il supporte OIDC, SAML, et peut fédérer des annuaires LDAP/Active Directory existants. Couplé à <strong>Authentik</strong> comme proxy d'authentification, vous couvrez l'authentification de l'ensemble de vos applications internes sans exposer chacune d'elles directement.</p>
+<div class="ao-code"><code># Docker Compose minimal pour Keycloak
+services:
+  keycloak:
+    image: quay.io/keycloak/keycloak:24.0
+    command: start-dev
+    environment:
+      KC_DB: postgres
+      KC_DB_URL: jdbc:postgresql://db/keycloak
+      KEYCLOAK_ADMIN: admin
+      KEYCLOAK_ADMIN_PASSWORD: \${ADMIN_PASS}
+    ports:
+      - "8080:8080"</code></div>
+<h2>Micro-segmentation réseau</h2>
+<p>Sur Kubernetes, les <strong>NetworkPolicies Cilium</strong> permettent d'exprimer des politiques L3/L4 et L7. Refusez tout trafic par défaut (<code>default-deny</code>) et accordez uniquement les flux légitimes et documentés. Sur les VMs, <strong>HashiCorp Consul</strong> avec intentions offre la même granularité entre services.</p>
+<h2>Device Posture Assessment</h2>
+<p>Un accès ne devrait être accordé qu'à des appareils dont l'état de sécurité est connu et conforme. <strong>Tailscale</strong> combiné à des ACLs par tags permet de mettre en place cette logique facilement, même en environnement hybride.</p>
+`
+  },
+  {
+    id:3, tag:'Réseau', tc:'ta', thumb:'t-a', tl:'réseau',
+    date:'1 Avr 2026', read:'10 min',
+    title:'SDN avec OpenFlow : repenser l\'architecture réseau',
+    content:`
+<p>Le <strong>Software-Defined Networking</strong> dissocie le plan de contrôle du plan de données. Plutôt que de configurer chaque équipement individuellement, un contrôleur central programme les règles de flux sur l'ensemble des switches et routers. OpenFlow est le protocole de communication entre le contrôleur et les équipements.</p>
+<h2>Architecture d'un réseau SDN</h2>
+<p>On distingue trois plans dans un réseau SDN. Le <strong>plan de données</strong> (dataplane) correspond aux équipements physiques ou virtuels qui forwarde les paquets. Le <strong>plan de contrôle</strong> est centralisé dans le contrôleur SDN. Le <strong>plan de gestion</strong> gère la configuration et le monitoring.</p>
+<div class="ao-code"><code># Installer Open vSwitch
+apt install openvswitch-switch
+
+# Créer un bridge OVS
+ovs-vsctl add-br br-sec
+
+# Connecter le bridge au contrôleur
+ovs-vsctl set-controller br-sec \\
+  tcp:192.168.1.100:6633
+
+# Vérifier la connexion
+ovs-vsctl show</code></div>
+<h2>OpenDaylight et ONOS</h2>
+<p><strong>OpenDaylight</strong> et <strong>ONOS</strong> sont les deux contrôleurs open source les plus matures. ONOS brille particulièrement dans les environnements carrier-grade avec ses garanties de haute disponibilité. OpenDaylight offre un écosystème de plugins très riche pour les cas d'usage enterprise.</p>
+<div class="ao-callout"><p>Dans un contexte DevSecOps, le SDN permet de programmer dynamiquement des règles de quarantaine : dès qu'une alerte SIEM se déclenche, le contrôleur peut isoler automatiquement le segment réseau suspect.</p></div>
+<h2>P4 : le futur du dataplane programmable</h2>
+<p>Au-delà d'OpenFlow, le langage <strong>P4</strong> permet de programmer le comportement du dataplane lui-même — pas seulement les règles de forwarding, mais le traitement des paquets à un niveau très bas. Les smartNICs et certains ASICs modernes supportent P4, ouvrant des possibilités inédites pour l'inspection et la transformation de trafic en temps réel.</p>
+`
+  },
+  {
+    id:4, tag:'Infrastructure', tc:'tv', thumb:'t-v', tl:'infrastructure',
+    date:'24 Mar 2026', read:'15 min',
+    title:'Ansible + Terraform : automatiser du bare metal au cloud',
+    content:`
+<p><strong>Terraform</strong> provisionne l'infrastructure (VMs, réseaux, DNS). <strong>Ansible</strong> la configure (packages, services, utilisateurs). Ces deux outils sont complémentaires et forment ensemble le socle d'une démarche Infrastructure as Code robuste, de votre homelab jusqu'au cloud public.</p>
+<h2>Terraform : l'infrastructure déclarative</h2>
+<p>Terraform utilise HCL (HashiCorp Configuration Language) pour décrire l'état désiré de votre infrastructure. Son moteur de planification calcule le diff entre l'état courant et l'état désiré, puis applique uniquement les changements nécessaires. Le <strong>state file</strong> — à stocker en remote (S3, Terraform Cloud) — garde trace de l'état réel.</p>
+<div class="ao-code"><code># main.tf — Exemple Proxmox + Terraform
+terraform {
+  required_providers {
+    proxmox = {
+      source  = "bpg/proxmox"
+      version = "~> 0.46"
+    }
+  }
+}
+
+resource "proxmox_virtual_environment_vm" "k8s_node" {
+  count     = 3
+  name      = "k8s-node-\${count.index + 1}"
+  node_name = "pve01"
+  cpu { cores = 4 }
+  memory { dedicated = 8192 }
+}</code></div>
+<h2>Ansible : la configuration idempotente</h2>
+<p>Un playbook Ansible bien écrit est <strong>idempotent</strong> : on peut le rejouer plusieurs fois sans effets de bord. Utilisez des <strong>roles</strong> pour organiser votre code et <strong>molecule</strong> pour tester vos rôles dans des containers avant de les déployer. L'inventaire dynamique permet de cibler automatiquement les VMs créées par Terraform.</p>
+<div class="ao-callout"><p>Combinez Terraform et Ansible via un null_resource avec un remote-exec provisioner — ou mieux, via un pipeline CI/CD GitLab qui exécute d'abord terraform apply puis ansible-playbook sur le nouvel inventaire.</p></div>
+`
+  },
+  {
+    id:5, tag:'Cybersécurité', tc:'tc', thumb:'t-c', tl:'sécurité',
+    date:'17 Mar 2026', read:'18 min',
+    title:'Construire un SIEM open source avec Wazuh et ELK Stack',
+    content:`
+<p>Un <strong>SIEM</strong> (Security Information and Event Management) centralise, corrèle et alerte sur les événements de sécurité de votre infrastructure. <strong>Wazuh</strong> + <strong>Elasticsearch / OpenSearch</strong> forment l'un des stacks SIEM open source les plus complets et actifs du marché.</p>
+<h2>Architecture du stack</h2>
+<p>Wazuh se compose d'un <strong>Manager</strong> qui reçoit les événements, d'<strong>agents</strong> déployés sur chaque endpoint, et d'une <strong>API REST</strong>. OpenSearch (fork open source d'Elasticsearch) stocke et indexe les données. OpenSearch Dashboards (fork de Kibana) offre la visualisation.</p>
+<div class="ao-code"><code># docker-compose.yml — Wazuh All-in-One
+services:
+  wazuh.manager:
+    image: wazuh/wazuh-manager:4.7.3
+    ports:
+      - "1514:1514/udp"   # agents
+      - "55000:55000"     # API REST
+    volumes:
+      - wazuh_data:/var/ossec/data
+
+  opensearch:
+    image: opensearchproject/opensearch:2.11
+    environment:
+      - "OPENSEARCH_JAVA_OPTS=-Xms2g -Xmx2g"
+      - discovery.type=single-node</code></div>
+<h2>Règles de détection personnalisées</h2>
+<p>Wazuh intègre des milliers de règles prêtes à l'emploi (rootkits, CVE connues, brute force SSH). Vous pouvez les compléter avec des <strong>règles XML custom</strong> adaptées à votre environnement. Créez des règles pour détecter des comportements anormaux spécifiques à votre stack (tentatives d'accès à l'API Kubernetes, modifications de sudoers…).</p>
+<div class="ao-callout"><p>Activez les <strong>File Integrity Monitoring (FIM)</strong> sur les répertoires critiques (/etc, /bin, /usr/bin). Toute modification non planifiée déclenchera une alerte immédiate — excellent pour détecter un mouvement latéral post-exploitation.</p></div>
+`
+  },
+  {
+    id:6, tag:'Réseau', tc:'ta', thumb:'t-a', tl:'réseau',
+    date:'10 Mar 2026', read:'7 min',
+    title:'WireGuard vs OpenVPN : choisir son VPN pour un lab DevSecOps',
+    content:`
+<p>Le VPN reste un composant fondamental de l'accès sécurisé à un lab ou une infrastructure distante. <strong>WireGuard</strong>, intégré au kernel Linux depuis la version 5.6, s'est imposé comme une alternative moderne et performante à <strong>OpenVPN</strong>. Mais lequel choisir selon votre usage ?</p>
+<h2>WireGuard : la modernité et la performance</h2>
+<p>WireGuard représente ~4000 lignes de code C (vs ~70 000 pour OpenVPN), ce qui facilite drastiquement son audit de sécurité. Il repose sur une cryptographie moderne et figée : <strong>ChaCha20</strong> pour le chiffrement, <strong>Curve25519</strong> pour l'échange de clés, <strong>Poly1305</strong> pour l'authenticité. Pas de négociation d'algorithme, pas de surface d'attaque liée à une mauvaise configuration crypto.</p>
+<div class="ao-code"><code># /etc/wireguard/wg0.conf — Serveur
+[Interface]
+PrivateKey = &lt;SERVER_PRIVATE_KEY&gt;
+Address    = 10.0.0.1/24
+ListenPort = 51820
+
+[Peer]
+PublicKey  = &lt;CLIENT_PUBLIC_KEY&gt;
+AllowedIPs = 10.0.0.2/32
+
+# Activer WireGuard
+wg-quick up wg0</code></div>
+<h2>OpenVPN : la flexibilité et l'écosystème</h2>
+<p>OpenVPN reste pertinent pour les environnements qui nécessitent une <strong>compatibilité large</strong> (clients anciens, équipements réseau tiers), une <strong>traversée fine de firewalls</strong> (TCP/443 est rarement bloqué), ou des fonctionnalités avancées comme les CRL et la révocation de certificats granulaire.</p>
+<div class="ao-callout"><p>Pour un lab DevSecOps personnel, choisissez WireGuard sans hésitation. Pour une PKI d'entreprise avec gestion de certificats et révocation, OpenVPN reste plus adapté — ou explorez Tailscale qui abstrait WireGuard avec une couche de gestion des identités.</p></div>
+<h2>Tailscale : WireGuard managé</h2>
+<p><strong>Tailscale</strong> construit un mesh VPN WireGuard avec une gestion d'identités intégrée (SSO via votre IdP). Son <strong>MagicDNS</strong> résout automatiquement les noms de vos machines. Pour un lab multi-sites ou une équipe distribuée, c'est de loin la solution la plus rapide à déployer et la plus simple à maintenir.</p>
+`
+  }
+];
+
+/* ─── RENDER ARTICLE GRID ─── */
+const grid = document.getElementById('articles-grid');
+ARTS.forEach((a, i) => {
+  const delay = ['reveal-d1','reveal-d2','reveal-d3'][i % 3];
+  grid.innerHTML += `
+  <article class="ac reveal ${delay}" onclick="openArticle(${a.id})" role="button" tabindex="0" aria-label="Lire l'article : ${a.title}" onkeypress="if(event.key==='Enter')openArticle(${a.id})">
+    <div class="ac-thumb"><div class="ac-thumb-inner ${a.thumb}" role="img" aria-label="Miniature ${a.tag}"><span class="ac-tl">${a.tl}</span></div></div>
+    <div class="ac-body">
+      <div class="ac-tag ${a.tc}">${a.tag}</div>
+      <h3 class="ac-title">${a.title}</h3>
+      <div class="ac-meta"><span>${a.date}</span><span>${a.read}</span></div>
+    </div>
+  </article>`;
+});
+
+/* ─── ARTICLE OVERLAY ─── */
+function openArticle(id) {
+  const a = ARTS.find(x => x.id === id);
+  if (!a) return;
+  const overlay = document.getElementById('art-overlay');
+  document.getElementById('ao-tag').textContent = a.tag;
+  document.getElementById('ao-tag').className = `ao-tag ${a.tc}`;
+  document.getElementById('ao-title').textContent = a.title;
+  document.getElementById('ao-meta').innerHTML = `
+    <span>${a.date}</span>
+    <span>${a.read} de lecture</span>
+    <span>${a.tag}</span>`;
+  document.getElementById('ao-body').innerHTML = a.content;
+  overlay.classList.add('open');
+  overlay.scrollTop = 0;
+  document.body.style.overflow = 'hidden';
+  overlay.focus();
+}
+function closeArticle() {
+  document.getElementById('art-overlay').classList.remove('open');
+  document.body.style.overflow = '';
+}
+document.addEventListener('keydown', e => { if (e.key === 'Escape') closeArticle(); });
+
+/* ─── NAV + PROGRESS ─── */
+const nav = document.getElementById('nav');
+const prog = document.getElementById('progress');
+window.addEventListener('scroll', () => {
+  nav.classList.toggle('scrolled', scrollY > 40);
+  const p = scrollY / (document.body.scrollHeight - innerHeight);
+  prog.style.width = (p * 100) + '%';
+}, { passive: true });
+
+/* ─── SIDE NAV ─── */
+const sections = [...document.querySelectorAll('[data-section]')];
+const dots = [...document.querySelectorAll('.sn-dot')];
+const secIO = new IntersectionObserver(entries => {
+  entries.forEach(e => {
+    if (e.isIntersecting) {
+      const id = e.target.dataset.section;
+      dots.forEach(d => d.classList.toggle('active', d.dataset.target === id));
+    }
+  });
+}, { threshold: 0.4 });
+sections.forEach(s => secIO.observe(s));
+dots.forEach(d => d.addEventListener('click', () => {
+  document.getElementById(d.dataset.target)?.scrollIntoView({ behavior: 'smooth', block: 'start' });
+}));
+
+/* ─── HERO CANVAS ─── */
+(function() {
+  const canvas = document.getElementById('hero-canvas');
+  const ctx = canvas.getContext('2d');
+  let W, H, pts, mouse = { x: -9999, y: -9999 };
+  const N = 90, DIST = 140;
+
+  function resize() {
+    W = canvas.width  = canvas.parentElement.offsetWidth || innerWidth;
+    H = canvas.height = canvas.parentElement.offsetHeight || innerHeight;
+    init();
+  }
+  function init() {
+    pts = Array.from({ length: N }, () => ({
+      x: Math.random() * W, y: Math.random() * H,
+      vx: (Math.random() - .5) * .45, vy: (Math.random() - .5) * .45,
+      r: Math.random() * 1.6 + .4
+    }));
+  }
+  function draw() {
+    ctx.clearRect(0, 0, W, H);
+    pts.forEach(p => {
+      p.x += p.vx; p.y += p.vy;
+      if (p.x < 0 || p.x > W) p.vx *= -1;
+      if (p.y < 0 || p.y > H) p.vy *= -1;
+      const dx = p.x - mouse.x, dy = p.y - mouse.y;
+      const md = Math.hypot(dx, dy);
+      if (md < 120) { p.x += dx / md * 1.8; p.y += dy / md * 1.8; }
+    });
+    for (let i = 0; i < N; i++) {
+      for (let j = i + 1; j < N; j++) {
+        const dx = pts[i].x - pts[j].x, dy = pts[i].y - pts[j].y;
+        const d = Math.hypot(dx, dy);
+        if (d < DIST) {
+          ctx.beginPath();
+          ctx.strokeStyle = `rgba(168,140,255,${(1 - d/DIST) * 0.18})`;
+          ctx.lineWidth = .7;
+          ctx.moveTo(pts[i].x, pts[i].y);
+          ctx.lineTo(pts[j].x, pts[j].y);
+          ctx.stroke();
+        }
+      }
+    }
+    pts.forEach(p => {
+      ctx.beginPath();
+      ctx.arc(p.x, p.y, p.r, 0, Math.PI * 2);
+      ctx.fillStyle = 'rgba(168,140,255,0.4)';
+      ctx.fill();
+    });
+    requestAnimationFrame(draw);
+  }
+  const hero = document.getElementById('hero');
+  hero.addEventListener('mousemove', e => {
+    const r = canvas.getBoundingClientRect();
+    mouse.x = e.clientX - r.left; mouse.y = e.clientY - r.top;
+  }, { passive: true });
+  hero.addEventListener('mouseleave', () => { mouse.x = -9999; mouse.y = -9999; });
+  window.addEventListener('resize', resize, { passive: true });
+  requestAnimationFrame(() => { resize(); draw(); });
+})();
+
+/* ─── TYPEWRITER ─── */
+(function() {
+  const el = document.getElementById('tw');
+  const lines = [
+    'Tutoriels sur l\'infrastructure moderne.',
+    'Guides pratiques en cybersécurité.',
+    'Concepts réseau vulgarisés.',
+    'Du DevOps au DevSecOps.',
+  ];
+  let li = 0, ci = 0, del = false;
+  function tick() {
+    const txt = lines[li];
+    el.textContent = del ? txt.slice(0, --ci) : txt.slice(0, ++ci);
+    if (!del && ci === txt.length) { del = true; setTimeout(tick, 2000); return; }
+    if (del && ci === 0) { del = false; li = (li + 1) % lines.length; }
+    setTimeout(tick, del ? 20 : 42);
+  }
+  setTimeout(tick, 1300);
+})();
+
+/* ─── SCROLL REVEAL ─── */
+(function() {
+  const io = new IntersectionObserver(entries => {
+    entries.forEach(e => {
+      if (e.isIntersecting) {
+        e.target.classList.add('visible');
+        io.unobserve(e.target);
+      }
+    });
+  }, { threshold: 0.1 });
+  document.querySelectorAll('.reveal,.clip-wrap,.split-line').forEach(el => io.observe(el));
+})();
+
+/* ─── 3D TILT ─── */
+(function() {
+  [...document.querySelectorAll('.pc, .ac')].forEach(card => {
+    card.addEventListener('mousemove', e => {
+      const r = card.getBoundingClientRect();
+      const x = (e.clientX - r.left) / r.width  - .5;
+      const y = (e.clientY - r.top)  / r.height - .5;
+      card.style.transform = `perspective(700px) rotateY(${x*10}deg) rotateX(${-y*7}deg) translateY(-8px)`;
+    });
+    card.addEventListener('mouseleave', () => { card.style.transform = ''; });
+  });
+})();
+
+/* ─── MAGNETIC BUTTONS ─── */
+(function() {
+  document.querySelectorAll('.btn-p,.btn-g').forEach(btn => {
+    btn.addEventListener('mousemove', e => {
+      const r = btn.getBoundingClientRect();
+      const x = (e.clientX - r.left - r.width  / 2) * .22;
+      const y = (e.clientY - r.top  - r.height / 2) * .22;
+      btn.style.transform = `translate(${x}px,${y - 2}px)`;
+    });
+    btn.addEventListener('mouseleave', () => { btn.style.transform = ''; });
+  });
+})();
+
+/* ─── PARALLAX THUMBNAILS ─── */
+(function() {
+  const cards = document.querySelectorAll('.ac');
+  window.addEventListener('scroll', () => {
+    cards.forEach(c => {
+      const r = c.getBoundingClientRect();
+      const off = (r.top + r.height / 2 - innerHeight / 2) * .055;
+      const t = c.querySelector('.ac-thumb-inner');
+      if (t) t.style.transform = `translateY(${off}px)`;
+    });
+  }, { passive: true });
+})();
+
+
+/* ─── CATEGORIES ─── */
+const CAT_META = {
+  infra:  { label:'Infrastructure', col:'var(--v)', glow:'oklch(0.50 0.28 280/.22)', desc:'Kubernetes, Terraform, CI/CD, containers — les fondations d\'une infrastructure moderne.' },
+  sec:    { label:'Cybersécurité',   col:'var(--c)', glow:'oklch(0.50 0.18 194/.18)', desc:'Zero Trust, SIEM, détection d\'intrusion, hardening — sécuriser sans compromis.' },
+  reseau: { label:'Réseau',          col:'var(--a)', glow:'oklch(0.54 0.18 65/.18)',  desc:'SDN, VPN, routage, firewall — maîtriser les flux dans des architectures distribuées.' },
+};
+const CAT_TAG_MAP = { infra:'Infrastructure', sec:'Cybersécurité', reseau:'Réseau' };
+const CAT_TC      = { infra:'tv', sec:'tc', reseau:'ta' };
+
+function openCat(type, event) {
+  const meta = CAT_META[type];
+  const overlay = document.getElementById('cat-overlay');
+  if (event && event.currentTarget) {
+    const r = event.currentTarget.getBoundingClientRect();
+    overlay.style.setProperty('--cat-x', (r.left + r.width/2) + 'px');
+    overlay.style.setProperty('--cat-y', (r.top  + r.height/2) + 'px');
+  } else {
+    overlay.style.setProperty('--cat-x', '50%');
+    overlay.style.setProperty('--cat-y', '50%');
+  }
+  const tagEl = document.getElementById('cat-tag');
+  tagEl.textContent = meta.label;
+  tagEl.className = 'ao-tag ' + CAT_TC[type];
+  document.getElementById('cat-title').textContent = meta.label;
+  document.getElementById('cat-desc-text').textContent = meta.desc;
+  overlay.style.setProperty('--cat-col', meta.col);
+  overlay.style.setProperty('--cat-glow', meta.glow);
+
+  const tagName = CAT_TAG_MAP[type];
+  const filtered = ARTS.filter(a => a.tag === tagName);
+  const grid = document.getElementById('cat-grid');
+  grid.innerHTML = filtered.map((a, i) => `
+    <article class="ac" onclick="openArticle(${a.id})" role="button" tabindex="0"
+      aria-label="Lire : ${a.title}" onkeypress="if(event.key==='Enter')openArticle(${a.id})"
+      style="opacity:0;transform:translateY(32px);transition:opacity .6s ${i*0.12}s var(--ease),transform .6s ${i*0.12}s var(--ease)">
+      <div class="ac-thumb"><div class="ac-thumb-inner ${a.thumb}" role="img" aria-label="${a.tl}"><span class="ac-tl">${a.tl}</span></div></div>
+      <div class="ac-body">
+        <div class="ac-tag ${a.tc}">${a.tag}</div>
+        <h3 class="ac-title">${a.title}</h3>
+        <div class="ac-meta"><span>${a.date}</span><span>${a.read}</span></div>
+      </div>
+    </article>`).join('');
+
+  overlay.classList.add('open');
+  overlay.scrollTop = 0;
+  document.body.style.overflow = 'hidden';
+
+  requestAnimationFrame(() => requestAnimationFrame(() => {
+    grid.querySelectorAll('.ac').forEach(c => { c.style.opacity='1'; c.style.transform='translateY(0)'; });
+    grid.querySelectorAll('.ac').forEach(card => {
+      card.addEventListener('mousemove', e => {
+        const r2 = card.getBoundingClientRect();
+        const x = (e.clientX-r2.left)/r2.width-.5, y = (e.clientY-r2.top)/r2.height-.5;
+        card.style.transform = `perspective(700px) rotateY(${x*10}deg) rotateX(${-y*7}deg) translateY(-8px)`;
+      });
+      card.addEventListener('mouseleave', () => { card.style.transform=''; });
+    });
+  }));
+}
+
+function closeCat() {
+  document.getElementById('cat-overlay').classList.remove('open');
+  document.body.style.overflow = '';
+}
+
+/* ─── SUBSCRIBE ─── */
+function handleSub(e) {
+  e.preventDefault();
+  const btn = e.target.querySelector('button');
+  btn.textContent = '✓ Abonné !';
+  btn.style.background = 'oklch(0.6 0.18 160)';
+  e.target.querySelector('input').value = '';
+  setTimeout(() => { btn.textContent = 'S\'abonner'; btn.style.background = ''; }, 3000);
+}
+
+/* ═══════════════════════════════════════
+   FX ENGINE — cursor + 3D wireframes + aura
+═══════════════════════════════════════ */
+(function() {
+
+/* ── Cursor tracker ── */
+const dot  = document.getElementById('cur-dot');
+const ring = document.getElementById('cur-ring');
+let mx = -999, my = -999, rx = 0, ry = 0;
+document.addEventListener('mousemove', e => { mx = e.clientX; my = e.clientY; }, { passive:true });
+document.addEventListener('mouseleave', () => { mx = -999; });
+function tickCursor() {
+  if (mx > -900) {
+    dot.style.left  = mx + 'px';
+    dot.style.top   = my + 'px';
+    rx += (mx - rx) * 0.13;
+    ry += (my - ry) * 0.13;
+    ring.style.left = rx + 'px';
+    ring.style.top  = ry + 'px';
+  }
+  requestAnimationFrame(tickCursor);
+}
+tickCursor();
+
+/* ── FX Canvas ── */
+const cv  = document.getElementById('fx-canvas');
+const ctx = cv.getContext('2d');
+let W = 0, H = 0;
+function resize() { W = cv.width = innerWidth; H = cv.height = innerHeight; }
+window.addEventListener('resize', resize, { passive:true });
+resize();
+
+/* ── 3D math ── */
+const rX = (p,a) => [p[0], p[1]*Math.cos(a)-p[2]*Math.sin(a), p[1]*Math.sin(a)+p[2]*Math.cos(a)];
+const rY = (p,a) => [p[0]*Math.cos(a)+p[2]*Math.sin(a), p[1], -p[0]*Math.sin(a)+p[2]*Math.cos(a)];
+const rZ = (p,a) => [p[0]*Math.cos(a)-p[1]*Math.sin(a), p[0]*Math.sin(a)+p[1]*Math.cos(a), p[2]];
+const proj = (p,cx,cy,fov,s) => { const z=p[2]+fov; const sc=(fov/z)*s; return [cx+p[0]*sc, cy+p[1]*sc, p[2]]; };
+
+/* ── Shape templates ── */
+const TPL = {
+  cube: {
+    v:[[-1,-1,-1],[1,-1,-1],[1,1,-1],[-1,1,-1],[-1,-1,1],[1,-1,1],[1,1,1],[-1,1,1]],
+    e:[[0,1],[1,2],[2,3],[3,0],[4,5],[5,6],[6,7],[7,4],[0,4],[1,5],[2,6],[3,7]]
+  },
+  octa: {
+    v:[[0,-1.4,0],[0,1.4,0],[1,0,0],[-1,0,0],[0,0,1],[0,0,-1]],
+    e:[[0,2],[0,3],[0,4],[0,5],[1,2],[1,3],[1,4],[1,5],[2,4],[4,3],[3,5],[5,2]]
+  },
+  ring: (() => {
+    const N=20, v=[], e=[];
+    for(let i=0;i<N;i++){const a=i/N*Math.PI*2;v.push([Math.cos(a)*1.5,Math.sin(a)*1.5,0]);}
+    for(let i=0;i<N;i++){const a=i/N*Math.PI*2;v.push([Math.cos(a)*1.5,0,Math.sin(a)*1.5]);}
+    for(let i=0;i<N;i++){e.push([i,(i+1)%N]);e.push([N+i,N+(i+1)%N]);}
+    return {v,e};
+  })(),
+  diamond: {
+    v:[[0,-1.6,0],[0,1.6,0],[1.1,0,0],[-1.1,0,0],[0,0,1.1],[0,0,-1.1]],
+    e:[[0,2],[0,3],[0,4],[0,5],[1,2],[1,3],[1,4],[1,5],[2,4],[4,3],[3,5],[5,2]]
+  }
+};
+
+/* ── Scene ── */
+// docY = document Y where shape is vertically centred on screen
+const scene = [
+  { type:'octa', rx:0.2, ry:0.5, rz:0.3, srx:.006, sry:.008, srz:.007, docY:1000, fx:.88, fy:.50, size:65, col:'168,110,255', a:.45 },
+  { type:'ring', rx:.5,  ry:.1,  rz:.2,  srx:.008, sry:.004, srz:.005, docY:2200, fx:.08, fy:.50, size:90, col:'80,210,220',  a:.35 },
+];
+
+/* ── Sparks ── */
+const sparks = [];
+let lastSpark = 0;
+
+/* ── Draw shape ── */
+function drawShape(sh) {
+  const sy = sh.docY - scrollY;   // centre Y in viewport
+  if (sy < -400 || sy > H + 400) return;
+  const cx = sh.fx * W, cy = sy;
+  const { v, e } = TPL[sh.type];
+
+  // rotate vertices
+  const rv = v.map(p => {
+    let q = [...p];
+    q = rX(q, sh.rx); q = rY(q, sh.ry); q = rZ(q, sh.rz);
+    return q;
+  });
+
+  // draw glow pass first (thick, transparent)
+  ctx.lineWidth = 5;
+  e.forEach(([a,b]) => {
+    const pa = proj(rv[a], cx, cy, 450, sh.size);
+    const pb = proj(rv[b], cx, cy, 450, sh.size);
+    const zf = Math.max(0, Math.min(1, (rv[a][2]+rv[b][2])/2 / 2 + .6));
+    ctx.beginPath();
+    ctx.strokeStyle = `rgba(${sh.col},${sh.a * zf * 0.18})`;
+    ctx.moveTo(pa[0],pa[1]); ctx.lineTo(pb[0],pb[1]);
+    ctx.stroke();
+  });
+  // draw crisp lines
+  ctx.lineWidth = 1;
+  e.forEach(([a,b]) => {
+    const pa = proj(rv[a], cx, cy, 450, sh.size);
+    const pb = proj(rv[b], cx, cy, 450, sh.size);
+    const zf = Math.max(0.2, Math.min(1, (rv[a][2]+rv[b][2])/2 / 2 + .7));
+    ctx.beginPath();
+    ctx.strokeStyle = `rgba(${sh.col},${sh.a * zf})`;
+    ctx.moveTo(pa[0],pa[1]); ctx.lineTo(pb[0],pb[1]);
+    ctx.stroke();
+  });
+
+  // vertex dots
+  rv.forEach(p => {
+    const pp = proj(p, cx, cy, 450, sh.size);
+    const zf = Math.max(0, (p[2]+1.5)/3);
+    ctx.beginPath();
+    ctx.arc(pp[0],pp[1], 1.5,0,Math.PI*2);
+    ctx.fillStyle = `rgba(${sh.col},${sh.a * zf * 0.9})`;
+    ctx.fill();
+  });
+
+  // advance rotation
+  sh.rx += sh.srx; sh.ry += sh.sry; sh.rz += sh.srz;
+}
+
+/* ── Mouse glow lerp ── */
+let gx = 0, gy = 0;
+
+/* ── Main FX loop ── */
+function fxLoop() {
+  ctx.clearRect(0, 0, W, H);
+
+  // Mouse aura
+  if (mx > -900) {
+    gx += (mx - gx) * 0.09;
+    gy += (my - gy) * 0.09;
+    const gr = ctx.createRadialGradient(gx, gy, 0, gx, gy, 220);
+    gr.addColorStop(0,   'rgba(168,110,255,0.07)');
+    gr.addColorStop(0.4, 'rgba(80,210,220,0.04)');
+    gr.addColorStop(1,   'rgba(0,0,0,0)');
+    ctx.fillStyle = gr;
+    ctx.fillRect(0, 0, W, H);
+
+    // Sparks
+    const now = Date.now();
+    if (now - lastSpark > 35) {
+      sparks.push({ x:mx, y:my, vx:(Math.random()-.5)*2.5, vy:(Math.random()-.5)*2.5 - .5, life:1, r:Math.random()*2+.8, col: Math.random()>.5 ? '168,110,255' : '80,210,220' });
+      lastSpark = now;
+    }
+  }
+
+  // Draw & age sparks
+  for (let i = sparks.length-1; i >= 0; i--) {
+    const s = sparks[i];
+    s.x += s.vx; s.y += s.vy; s.vy += 0.04; s.life -= 0.04;
+    if (s.life <= 0) { sparks.splice(i,1); continue; }
+    ctx.beginPath();
+    ctx.arc(s.x, s.y, s.r * s.life, 0, Math.PI*2);
+    ctx.fillStyle = `rgba(${s.col},${s.life * 0.75})`;
+    ctx.fill();
+  }
+
+  // 3D shapes
+  scene.forEach(sh => drawShape(sh));
+
+  requestAnimationFrame(fxLoop);
+}
+fxLoop();
+
+})(); // end FX engine
+</script>
+</body>
+</html>

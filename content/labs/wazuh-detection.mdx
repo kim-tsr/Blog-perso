@@ -1,0 +1,112 @@
+---
+title: "SIEM Wazuh : déclencher et investiguer une alerte"
+slug: wazuh-detection
+objective: "Déployer Wazuh en lab, ingérer les logs d'un agent, simuler une attaque, voir l'alerte tomber."
+tag: Cybersécurité
+theme: cyan
+difficulty: avancé
+duration: "45 min"
+prerequisites:
+  - "Une VM avec 4 Go de RAM minimum"
+  - "Une seconde VM (la cible) avec accès SSH"
+  - "Notions de SIEM et de logs"
+tools:
+  - "Wazuh manager"
+  - "Wazuh agent"
+  - "Docker Compose"
+---
+
+## 🎯 Objectif
+
+Installer une stack **Wazuh** complète, brancher un agent sur une seconde machine, déclencher une détection (brute-force SSH) et investiguer dans Kibana/Wazuh Dashboard.
+
+## 📋 Étape 1 — Installer Wazuh manager (Docker)
+
+Sur la VM **manager** :
+
+```bash
+git clone https://github.com/wazuh/wazuh-docker.git -b v4.7.5
+cd wazuh-docker/single-node
+docker compose -f generate-indexer-certs.yml run --rm generator
+docker compose up -d
+```
+
+Patientez ~3 minutes que tous les conteneurs soient `healthy`. Accédez à `https://<ip-manager>` (admin / SecretPassword).
+
+## 📋 Étape 2 — Enregistrer un agent
+
+Récupérez la clé d'enregistrement :
+
+```bash
+docker exec -it single-node-wazuh.manager-1 \
+  /var/ossec/bin/manage_agents
+# A → ajouter un agent, donnez un nom et l'IP cible
+# E → extraire la clé
+```
+
+Sur la VM **cible** :
+
+```bash
+WAZUH_MANAGER='<ip-manager>' apt install wazuh-agent
+echo "<CLE_BASE64>" | /var/ossec/bin/manage_agents -i
+systemctl enable --now wazuh-agent
+```
+
+Dans le dashboard, l'agent passe **Active** au bout d'une minute.
+
+## 📋 Étape 3 — Activer la détection brute-force SSH
+
+Wazuh fournit la règle **5712** par défaut (`SSH authentication failed`) et la règle **5710** (multiple failed logins). Vérifiez sur le manager :
+
+```bash
+docker exec single-node-wazuh.manager-1 \
+  grep -A2 "5712" /var/ossec/ruleset/rules/0095-sshd_rules.xml
+```
+
+## 📋 Étape 4 — Simuler l'attaque
+
+Depuis votre poste, vers la VM cible :
+
+```bash
+for i in $(seq 1 20); do
+  sshpass -p wrongpass ssh -o StrictHostKeyChecking=no \
+    fakeuser@<ip-cible> exit 2>/dev/null
+done
+```
+
+## 📋 Étape 5 — Investigation
+
+Dans **Wazuh Dashboard → Security events** :
+
+1. Filtrez sur `rule.id: 5710` ou `rule.level >= 10`
+2. Vous voyez l'alerte **"sshd: Multiple authentication failures"**
+3. Cliquez sur un événement → champ `data.srcip` = votre poste
+4. Onglet **MITRE ATT&CK** → mappé sur **T1110.001 Brute Force: Password Guessing**
+
+## 📋 Étape 6 — Réagir automatiquement
+
+Activez l'**active-response** `firewall-drop` dans `/var/ossec/etc/ossec.conf` sur l'agent :
+
+```xml
+<active-response>
+  <command>firewall-drop</command>
+  <location>local</location>
+  <rules_id>5710</rules_id>
+  <timeout>600</timeout>
+</active-response>
+```
+
+Relancez le brute-force : l'IP est **bannie 10 minutes** via iptables.
+
+## ✅ Validation
+
+- L'agent apparaît **Active** dans le dashboard
+- L'alerte `Multiple authentication failures` est visible
+- L'attribut MITRE est correctement mappé
+- L'active-response ajoute une règle iptables
+
+## 🚀 Pour aller plus loin
+
+- Branchez **Suricata** sur la cible pour ingérer les IDS events
+- Activez **FIM** (File Integrity Monitoring) sur `/etc` et `/var/www`
+- Exportez les alertes vers **Loki + Grafana** ou un n8n webhook
