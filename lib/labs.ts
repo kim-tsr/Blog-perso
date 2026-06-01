@@ -1,7 +1,7 @@
 import fs from 'fs'
 import path from 'path'
 import matter from 'gray-matter'
-import { ArticleTag, ArticleTheme } from './theme'
+import { ArticleTag, ArticleTheme, MinRole } from './theme'
 
 export type LabDifficulty = 'débutant' | 'intermédiaire' | 'avancé'
 
@@ -15,6 +15,7 @@ export interface LabMeta {
   duration: string
   prerequisites: string[]
   tools: string[]
+  minRole: MinRole
 }
 
 export interface Lab extends LabMeta {
@@ -46,6 +47,7 @@ export function getAllLabs(): Lab[] {
         duration:      data.duration as string,
         prerequisites: (data.prerequisites ?? []) as string[],
         tools:         (data.tools ?? []) as string[],
+        minRole:       ((data.minRole ?? 'free') as MinRole),
         content,
       }
     })

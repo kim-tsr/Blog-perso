@@ -1,5 +1,6 @@
 export type ArticleTag = 'Infrastructure' | 'Cybersécurité' | 'Réseau'
 export type ArticleTheme = 'violet' | 'cyan' | 'amber'
+export type MinRole = 'free' | 'pro' | 'admin'
 
 export interface ArticleMeta {
   slug: string
@@ -9,6 +10,7 @@ export interface ArticleMeta {
   tag: ArticleTag
   theme: ArticleTheme
   excerpt: string
+  minRole: MinRole
 }
 
 export interface Article extends ArticleMeta {

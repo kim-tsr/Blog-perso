@@ -22,6 +22,7 @@ export function getAllArticles(): Article[] {
         tag:     data.tag as ArticleTag,
         theme:   data.theme as ArticleTheme,
         excerpt: data.excerpt as string,
+        minRole: ((data.minRole ?? 'free') as 'free' | 'pro' | 'admin'),
         content,
       }
     })

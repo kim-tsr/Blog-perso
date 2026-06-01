@@ -5,6 +5,8 @@ import { MDXRemote } from 'next-mdx-remote/rsc'
 import Link from 'next/link'
 import ReadingProgress from '@/components/ReadingProgress'
 import Footer from '@/components/Footer'
+import Paywall from '@/components/Paywall'
+import { getCurrentProfile, hasRole } from '@/lib/auth'
 
 export async function generateStaticParams() {
   return getAllLabs().map(l => ({ slug: l.slug }))
@@ -25,6 +27,9 @@ export default async function LabPage({ params }: { params: Promise<{ slug: stri
   const { slug } = await params
   const lab = getLabBySlug(slug)
   if (!lab) notFound()
+
+  const profile = await getCurrentProfile()
+  const allowed = hasRole(profile?.role ?? null, lab.minRole)
 
   const { tc } = getThemeClasses(lab.theme)
   const col = tc === 'tv' ? 'var(--v)' : tc === 'tc' ? 'var(--c)' : 'var(--a)'
@@ -138,9 +143,19 @@ export default async function LabPage({ params }: { params: Promise<{ slug: stri
         </div>
       </div>
 
-      <div className="lb-body prose" style={{ '--lb-col': col } as React.CSSProperties}>
-        <MDXRemote source={lab.content} />
-      </div>
+      {allowed ? (
+        <div className="lb-body prose" style={{ '--lb-col': col } as React.CSSProperties}>
+          <MDXRemote source={lab.content} />
+        </div>
+      ) : (
+        <Paywall
+          required={lab.minRole}
+          currentRole={profile?.role ?? null}
+          kind="lab"
+          title={lab.title}
+          signinNext={`/labs/${lab.slug}`}
+        />
+      )}
 
       <div className="lb-foot">
         <div className="lb-foot-cta">

@@ -26,7 +26,9 @@ export default function ArticlesGrid({ articles, hideMeta }: Props) {
       <style>{`
         .articles-head { display:flex; justify-content:space-between; align-items:flex-end; margin-bottom:60px; }
         .articles-grid { display:grid; grid-template-columns:repeat(3,1fr); gap:22px; }
-        .ac { background:rgba(255,255,255,0.03); border:1px solid var(--border); border-radius:14px; overflow:hidden; cursor:pointer; transform-style:preserve-3d; will-change:transform; transition:border-color .4s,box-shadow .4s,transform .5s var(--ease); display:block; }
+        .ac { position:relative; background:rgba(255,255,255,0.03); border:1px solid var(--border); border-radius:14px; overflow:hidden; cursor:pointer; transform-style:preserve-3d; will-change:transform; transition:border-color .4s,box-shadow .4s,transform .5s var(--ease); display:block; }
+        .ac-lock { position:absolute; top:14px; right:14px; z-index:2; display:inline-flex; align-items:center; gap:5px; padding:4px 10px; border-radius:100px; background:rgba(7,7,12,.78); backdrop-filter:blur(8px); border:1px solid oklch(0.68 0.24 280/.4); color:var(--v); font-family:var(--fm); font-size:9px; letter-spacing:.14em; text-transform:uppercase; }
+        .ac-lock svg { color:var(--v); }
         .ac:hover { border-color:rgba(255,255,255,.14); box-shadow:0 24px 64px rgba(0,0,0,.6); }
         .ac-thumb { height:210px; position:relative; overflow:hidden; }
         .ac-thumb-inner { width:100%; height:100%; display:flex; align-items:center; justify-content:center; transition:transform .6s var(--ease); }
@@ -63,6 +65,12 @@ export default function ArticlesGrid({ articles, hideMeta }: Props) {
                 onMouseLeave={() => onLeave(i)}
                 aria-label={`Lire : ${a.title}`}
               >
+                {a.minRole !== 'free' && (
+                  <span className="ac-lock" aria-label={`Contenu ${a.minRole}`}>
+                    <svg width="9" height="9" viewBox="0 0 12 12" fill="none" aria-hidden="true"><rect x="2.5" y="5.5" width="7" height="5" rx="1" stroke="currentColor" strokeWidth="1.2"/><path d="M4 5.5V4a2 2 0 014 0v1.5" stroke="currentColor" strokeWidth="1.2"/></svg>
+                    {a.minRole}
+                  </span>
+                )}
                 <div className="ac-thumb">
                   <div className={`ac-thumb-inner ${thumb}`} role="img" aria-label={`Miniature ${a.tag}`}>
                     <span className="ac-tl">{tl}</span>
