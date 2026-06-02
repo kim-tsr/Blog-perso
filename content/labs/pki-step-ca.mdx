@@ -1,0 +1,252 @@
+---
+title: "PKI moderne : monter une autorité de certification interne avec step-ca"
+slug: pki-step-ca
+objective: "Comprendre TLS de bout en bout, monter une CA privée avec step-ca, émettre des certificats courts via ACME, et déployer mTLS entre deux services."
+tag: Cybersécurité
+theme: cyan
+difficulty: avancé
+duration: "70 min"
+minRole: pro
+prerequisites:
+  - "Une VM Linux ou un container Docker"
+  - "Notions de base sur HTTPS/TLS"
+  - "OpenSSL installé (pour vérifications)"
+tools:
+  - "step-ca"
+  - "step CLI"
+  - "OpenSSL"
+  - "curl"
+quiz:
+  - question: "Quelle est la différence entre un certificat et une clé publique dans X.509 ?"
+    options:
+      - "Ils sont identiques"
+      - "Le certificat est la clé publique + des métadonnées (sujet, validité, usages) signées par une CA"
+      - "La clé publique chiffre, le certificat déchiffre"
+      - "Le certificat est plus long que la clé publique"
+    correct: 1
+    explanation: "Un certificat X.509 = (clé publique du sujet + métadonnées + signature de la CA). La signature de la CA est ce qui le rend vérifiable. Sans signature, c'est juste une clé publique."
+  - question: "Pourquoi la révocation par CRL/OCSP est-elle en pratique remplacée par des certificats courts (24h) ?"
+    options:
+      - "CRL et OCSP sont obsolètes"
+      - "Le browser/client ne vérifie souvent pas le CRL (soft-fail) ; un cert court limite naturellement la durée de compromission sans dépendre du check"
+      - "Les certificats courts sont plus rapides"
+      - "Pour économiser de l'espace"
+    correct: 1
+    explanation: "Les browsers en mode soft-fail ignorent les checks CRL/OCSP en cas d'indisponibilité réseau — donc une CRL ne te protège pas vraiment. Solution moderne : certificat de 24h, renouvelé automatiquement par ACME. Compromission = limitée à 24h max."
+  - question: "Que désigne 'mTLS' (mutual TLS) ?"
+    options:
+      - "TLS avec un mot de passe"
+      - "TLS où le client ET le serveur présentent un certificat — chacun prouve son identité"
+      - "TLS avec deux certificats serveur"
+      - "Une version 2 de TLS"
+    correct: 1
+    explanation: "TLS classique : serveur prouve son identité via certif, client reste anonyme (puis souvent il s'auth via mot de passe app). mTLS : les deux présentent un certif. Standard pour service-to-service dans les service meshes."
+  - question: "Pourquoi step-ca expose-t-il un provisioner ACME au lieu d'émettre directement par CSR signé ?"
+    options:
+      - "ACME est plus rapide"
+      - "ACME standardise un protocole de challenge (HTTP-01/DNS-01) qui prouve le contrôle d'un domaine — automatisable et auditable"
+      - "ACME est obligatoire pour TLS"
+      - "C'est le seul protocole supporté"
+    correct: 1
+    explanation: "ACME (RFC 8555, inventé par Let's Encrypt) standardise l'émission auto de certificats : le client prouve par challenge qu'il contrôle le domaine. Tous les clients ACME (cert-manager, traefik, certbot) marchent contre step-ca."
+  - question: "Dans un cluster Kubernetes interne, pourquoi préférer une CA privée step-ca à des certs self-signed ?"
+    options:
+      - "step-ca est obligatoire"
+      - "Avec self-signed, chaque service a son propre cert qu'il faut distribuer ; avec une CA privée tu distribues UNE seule fois le CA cert, et tu peux émettre/révoquer N certifs à la volée"
+      - "self-signed ne marche pas en cluster"
+      - "step-ca est moins cher"
+    correct: 1
+    explanation: "Self-signed = chaque consommateur doit faire confiance à chaque certif. CA privée = une racine de confiance, N certifs. C'est ce qu'utilisent cert-manager, Istio, Consul Connect — sous le capot, c'est toujours une CA privée."
+---
+
+## 🧠 Théorie : qu'est-ce qu'une PKI exactement ?
+
+PKI (**Public Key Infrastructure**) = l'ensemble des composants qui permettent de **distribuer la confiance** via la cryptographie asymétrique. Sans PKI, chaque service devrait vérifier individuellement chaque autre — ingérable.
+
+### Anatomie d'un certificat X.509
+
+```
+   ┌──────────────────────────────────────────────────┐
+   │                  Certificat X.509                │
+   │                                                  │
+   │  Issuer       : CN=My Internal CA                │
+   │  Subject      : CN=api.homelab.lan               │
+   │  Validity     : 2026-06-01 → 2026-06-02         │  ← 24h !
+   │  Public Key   : RSA 2048 / EC P-256              │
+   │  Extensions   :                                  │
+   │    KeyUsage   : DigitalSignature                 │
+   │    EKU        : ServerAuth, ClientAuth           │
+   │    SAN        : api.homelab.lan, 10.0.0.5       │
+   │                                                  │
+   │  ──── Signed by Issuer ────────────────────      │
+   │  Signature : 0xDEADBEEF...                       │
+   └──────────────────────────────────────────────────┘
+```
+
+### Chaîne de confiance
+
+```
+                   ┌───────────────────┐
+                   │   Root CA         │ ← clé hors-ligne, longue durée (10 ans)
+                   │   (offline)       │
+                   └─────────┬─────────┘
+                             │ signe
+                             ▼
+                   ┌───────────────────┐
+                   │ Intermediate CA   │ ← step-ca, signe en ligne
+                   │   (online)        │
+                   └─────────┬─────────┘
+                             │ signe
+              ┌──────────────┼──────────────┐
+              ▼              ▼              ▼
+        ┌─────────┐    ┌─────────┐    ┌─────────┐
+        │api.cert │    │db.cert  │    │app.cert │  ← 24h, renouvelés auto
+        └─────────┘    └─────────┘    └─────────┘
+```
+
+**Pourquoi 2 niveaux ?** Si l'intermediate est compromis, on le révoque sans changer la root (qui est dans un coffre). Pas besoin de redistribuer la racine de confiance à tous les clients.
+
+## 🎯 Objectif
+
+- Monter une **CA privée** avec step-ca
+- Émettre un certificat 24h via ACME pour `api.homelab.lan`
+- Déployer mTLS entre deux services Go simples
+- Vérifier la révocation manuelle
+
+## 📋 Étape 1 — Installer step-ca
+
+```bash
+# Sur une VM Linux ou en Docker
+wget https://dl.smallstep.com/cli/docs-ca-install/latest/step-cli_amd64.deb
+wget https://dl.smallstep.com/certificates/docs-ca-install/latest/step-ca_amd64.deb
+sudo dpkg -i step-cli_amd64.deb step-ca_amd64.deb
+
+# Initialise la PKI
+step ca init \
+  --name "Homelab CA" \
+  --dns ca.homelab.lan \
+  --address :8443 \
+  --provisioner admin@homelab.lan \
+  --acme
+```
+
+step-ca te demande un mot de passe pour la clé root (stocke-le bien — c'est ton secret le plus sensible).
+
+```bash
+# Démarrer le service
+step-ca $(step path)/config/ca.json
+```
+
+## 📋 Étape 2 — Distribuer le CA cert aux clients
+
+Récupère le bundle de confiance et installe-le là où tu en auras besoin :
+
+```bash
+# Bundle root + intermediate
+step ca root /tmp/root_ca.crt
+
+# Sur chaque client qui doit faire confiance à ta CA
+sudo cp /tmp/root_ca.crt /usr/local/share/ca-certificates/homelab.crt
+sudo update-ca-certificates
+```
+
+Vérifie : `curl https://ca.homelab.lan:8443/health` doit retourner `OK` sans erreur TLS.
+
+## 📋 Étape 3 — Émettre un certificat via ACME
+
+Installe un client ACME standard (lego, certbot, acme.sh). Ici avec `step ca certificate` (le client step natif) :
+
+```bash
+# Cert pour api.homelab.lan, valide 24h
+step ca certificate api.homelab.lan api.crt api.key --not-after 24h
+
+# Inspect
+step certificate inspect api.crt --short
+```
+
+Tu verras :
+
+```
+X.509v3 TLS Certificate
+  Subject:     api.homelab.lan
+  Issuer:      Homelab CA Intermediate CA
+  Provisioner: admin@homelab.lan
+  Valid from:  ...
+          to:  ... (24h plus tard)
+```
+
+## 📋 Étape 4 — Configurer mTLS entre deux services
+
+Crée un serveur Go simple qui exige un certif client signé par ta CA :
+
+```go
+// server.go
+package main
+
+import (
+  "crypto/tls"
+  "crypto/x509"
+  "fmt"
+  "io/ioutil"
+  "net/http"
+)
+
+func main() {
+  caCert, _ := ioutil.ReadFile("/tmp/root_ca.crt")
+  pool := x509.NewCertPool()
+  pool.AppendCertsFromPEM(caCert)
+
+  s := &http.Server{
+    Addr: ":8443",
+    TLSConfig: &tls.Config{
+      ClientCAs: pool,
+      ClientAuth: tls.RequireAndVerifyClientCert, // ← mTLS
+    },
+  }
+  http.HandleFunc("/", func(w http.ResponseWriter, r *http.Request) {
+    cn := r.TLS.PeerCertificates[0].Subject.CommonName
+    fmt.Fprintf(w, "Hello, authenticated as %s\n", cn)
+  })
+  s.ListenAndServeTLS("api.crt", "api.key")
+}
+```
+
+Émets un certif client puis teste :
+
+```bash
+step ca certificate client@homelab.lan client.crt client.key --not-after 24h
+
+# Sans cert client → 400 bad request
+curl --cacert /tmp/root_ca.crt https://api.homelab.lan:8443/
+
+# Avec cert client → 200 + identification
+curl --cacert /tmp/root_ca.crt \
+     --cert client.crt --key client.key \
+     https://api.homelab.lan:8443/
+# → Hello, authenticated as client@homelab.lan
+```
+
+## 📋 Étape 5 — Révocation
+
+```bash
+# Récupère le serial number du cert client
+SERIAL=$(step certificate inspect client.crt --format json | jq -r .serial_number)
+
+# Révoque
+step ca revoke $SERIAL --reason key_compromise
+```
+
+Le cert reste cryptographiquement valide mais la CA le refuse côté provisioner. En pratique, comme on est sur des certifs 24h, **on attend juste l'expiration** — c'est ça la stratégie short-lived.
+
+## ✅ Validation
+
+- `step ca health` → OK
+- Cert émis valide 24h
+- `curl` sans cert client → bloqué par mTLS
+- `curl` avec cert client → réponse avec identification du sujet
+
+## 🚀 Pour aller plus loin
+
+- **cert-manager** dans Kubernetes : déploie step-ca comme `Issuer`, et tous tes Ingress reçoivent un certif auto-renouvelé
+- **SPIFFE/SPIRE** : pousser le concept à l'extrême — chaque workload reçoit une identité cryptographique (SVID), zero-config
+- **Istio** ou **Linkerd** : mTLS automatique entre tous les pods d'un cluster, sans code applicatif

@@ -1,0 +1,286 @@
+---
+title: "API #3 — Audit logging structuré et corrélation"
+slug: api-03-audit-logging
+objective: "Produire des logs structurés JSON exploitables, propager un trace_id, et ingérer dans Loki pour pouvoir reconstituer un parcours utilisateur de bout en bout."
+tag: Cybersécurité
+theme: cyan
+difficulty: avancé
+duration: "65 min"
+minRole: pro
+series: api-securisee-from-zero
+seriesOrder: 3
+prerequisites:
+  - "Avoir terminé les Labs #1 et #2"
+  - "Loki + Grafana opérationnels (ou stack du homelab #4)"
+tools:
+  - "slog (Go 1.21+)"
+  - "OpenTelemetry"
+  - "Loki"
+  - "Grafana"
+quiz:
+  - question: "Pourquoi un log JSON est-il préférable à un log texte (printf) pour la sécurité ?"
+    options:
+      - "JSON est plus court"
+      - "JSON permet de chercher par champs (user, action, status) sans regex fragile, et préserve les types — base pour le SIEM et la détection automatique"
+      - "JSON est obligatoire pour Loki"
+      - "JSON consomme moins de stockage"
+    correct: 1
+    explanation: "Log texte : 'User alice failed login from 1.2.3.4 at 10:00' → grep + regex fragile. Log JSON : { user, action, status, ip } → on cherche 'status:failed AND user:alice' en LogQL/Lucene direct. Sans JSON pas de detection rule fiable."
+  - question: "Quel est le rôle d'un 'trace_id' (ou request_id) dans un log structuré ?"
+    options:
+      - "Identifier le serveur qui a logué"
+      - "Corréler tous les logs d'une même requête traversant N services — clé pour reconstituer un parcours en post-mortem"
+      - "Chiffrer le log"
+      - "Compter les requêtes"
+    correct: 1
+    explanation: "Un user clique → 5 microservices se passent la requête → chaque service log indépendamment. Sans trace_id : impossible de relier 'erreur au service 3' à 'user qui s'est plaint'. Avec : on filtre 'trace_id:abc' et on a toute l'histoire."
+  - question: "Quelle attaque est facilitée par des logs qui contiennent des données utilisateur sans neutralisation ?"
+    options:
+      - "Log injection : un attaquant injecte des caractères de contrôle (\\n, \\r) ou du JSON dans son input pour fausser les logs ou exploiter le parseur du SIEM"
+      - "Brute force"
+      - "Replay attack"
+      - "MITM"
+    correct: 0
+    explanation: "Exemple : user envoie comme login 'admin\\n{\"user\":\"admin\",\"status\":\"success\"}'. Log textuel naïf → 2 lignes : la vraie + la fausse. Avec JSON structuré + escape correct → impossible. Toujours encoder, jamais concaténer."
+  - question: "Pourquoi logger les échecs d'auth est plus précieux que logger les succès ?"
+    options:
+      - "Les succès sont déjà loggés ailleurs"
+      - "Les échecs sont rares et signalent souvent une attaque (brute force, scan) — taux d'échec anormal = alerte. Les succès sont du bruit pour la détection"
+      - "Les succès ne sont pas intéressants"
+      - "C'est obligatoire de logger les échecs"
+    correct: 1
+    explanation: "En prod normale : >99% des auths sont des succès, <1% échecs. Tracker le ratio (ou compter les échecs/min/IP/user) détecte instantanément un scan ou un brute force. Les succès, on les log oui mais avec moins de granularité."
+  - question: "Que veut-on dire par 'tail sampling' en tracing distribué ?"
+    options:
+      - "Échantillonner aléatoirement à l'entrée"
+      - "Décider après coup quelles traces conserver — typiquement on garde 100% des traces avec erreur ou latence > p95, et 1% du reste"
+      - "Stocker uniquement la fin des traces"
+      - "Limiter la taille de chaque trace"
+    correct: 1
+    explanation: "Head sampling = on décide à l'entrée (random 1%) → on rate les bugs. Tail sampling = on garde tout en buffer, on évalue à la fin, on garde l'intéressant. C'est cher en RAM mais bien plus pertinent pour le debug."
+---
+
+> 📚 **Série « API sécurisée from zero »** — Lab 3 / 4. L'API du Lab #2 a tout ce qu'il faut pour fonctionner. Maintenant elle doit produire les preuves de ce qu'elle fait.
+
+## 🧠 Théorie : du log "printf" au log "events" structurés
+
+```
+   Log printf (classique)            Log structuré (SRE / DevSecOps)
+
+   "User alice failed login         { "ts": "2026-06-01T10:00:00Z",
+    from 1.2.3.4 at 10:00"           "level": "warn",
+                                     "event": "auth.failure",
+                                     "user": "alice",
+                                     "ip": "1.2.3.4",
+                                     "reason": "invalid_password",
+                                     "trace_id": "abc123" }
+
+   ✗ grep + regex fragile           ✓ filtrable par champ
+   ✗ types perdus                   ✓ types préservés
+   ✗ log injection facile           ✓ neutralisation native
+```
+
+### Anatomie d'un log de sécurité bien fait
+
+| Champ | Pourquoi |
+|---|---|
+| `ts` | Toujours en UTC ISO 8601 → tri lexicographique = tri chronologique |
+| `level` | filtrage rapide (info / warn / error / critical) |
+| `event` | catégorie sémantique (`auth.failure`, `rbac.denied`, `data.access`) |
+| `user`, `ip` | acteur et origine — anonymiser si RGPD impose |
+| `trace_id` | corrélation multi-services |
+| `resource` | objet de l'action (ex: `document:42`) |
+| `result` | success / failure / partial |
+| `reason` | motif technique, pas pour l'utilisateur |
+
+## 🎯 Objectif
+
+À la fin :
+- Logs JSON structurés avec slog
+- Trace ID propagé sur toute la chaîne d'une requête
+- Ingestion dans Loki + dashboard Grafana
+- Requêtes LogQL pour la chasse aux anomalies
+
+## 📋 Étape 1 — slog (Go 1.21+) en JSON
+
+```go
+// logging/logger.go
+package logging
+
+import (
+  "context"
+  "log/slog"
+  "os"
+)
+
+var Logger *slog.Logger
+
+func Init() {
+  h := slog.NewJSONHandler(os.Stdout, &slog.HandlerOptions{
+    Level: slog.LevelInfo,
+  })
+  Logger = slog.New(h)
+}
+
+// Helper : log un événement de sécurité avec champs courants
+func SecEvent(ctx context.Context, event string, attrs ...slog.Attr) {
+  traceID, _ := ctx.Value("trace_id").(string)
+  base := []slog.Attr{
+    slog.String("event", event),
+    slog.String("trace_id", traceID),
+  }
+  Logger.LogAttrs(ctx, slog.LevelWarn, "sec_event", append(base, attrs...)...)
+}
+```
+
+## 📋 Étape 2 — Middleware trace_id
+
+```go
+// middleware/trace.go
+package middleware
+
+import (
+  "context"
+  "crypto/rand"
+  "encoding/hex"
+  "net/http"
+)
+
+func newTraceID() string {
+  b := make([]byte, 8)
+  rand.Read(b)
+  return hex.EncodeToString(b)
+}
+
+func Trace(next http.HandlerFunc) http.HandlerFunc {
+  return func(w http.ResponseWriter, r *http.Request) {
+    tid := r.Header.Get("X-Trace-Id")
+    if tid == "" { tid = newTraceID() }
+    w.Header().Set("X-Trace-Id", tid)
+    ctx := context.WithValue(r.Context(), "trace_id", tid)
+    next(w, r.WithContext(ctx))
+  }
+}
+```
+
+Place-le **en premier** dans la chaîne. Tous les middlewares suivants doivent lire `ctx.Value("trace_id")` pour leurs logs.
+
+## 📋 Étape 3 — Logger les événements sensibles
+
+Mise à jour du middleware auth du lab #1 :
+
+```go
+func Auth(next http.HandlerFunc) http.HandlerFunc {
+  return func(w http.ResponseWriter, r *http.Request) {
+    raw := strings.TrimPrefix(r.Header.Get("Authorization"), "Bearer ")
+    tok, err := jwt.Parse(raw, keyFunc, jwt.WithValidMethods([]string{"RS256"}))
+    if err != nil || !tok.Valid {
+      logging.SecEvent(r.Context(), "auth.failure",
+        slog.String("ip", r.RemoteAddr),
+        slog.String("reason", err.Error()),
+        slog.String("path", r.URL.Path))
+      http.Error(w, "invalid token", 401); return
+    }
+    claims := tok.Claims.(jwt.MapClaims)
+    logging.SecEvent(r.Context(), "auth.success",
+      slog.String("user", claims["sub"].(string)),
+      slog.String("ip", r.RemoteAddr))
+    // ... pose X-User puis next
+  }
+}
+```
+
+Et le RBAC :
+
+```go
+if !rbac.Can(role, action) {
+  logging.SecEvent(r.Context(), "rbac.denied",
+    slog.String("user", r.Header.Get("X-User")),
+    slog.String("role", string(role)),
+    slog.String("action", action),
+    slog.String("path", r.URL.Path))
+  http.Error(w, "forbidden", 403); return
+}
+```
+
+## 📋 Étape 4 — Ingestion vers Loki
+
+Si tu as la stack du Lab #4 homelab :
+
+```yaml
+# Sur le host de l'API, configurer promtail (déjà déployé via DaemonSet en cluster)
+# Pour un test rapide en local :
+docker run -d --name promtail -v /var/log:/var/log \
+  grafana/promtail:2.10.0 -config.file=/etc/promtail/config.yml
+```
+
+Ou directement, depuis Go, push vers Loki HTTP :
+
+```go
+// (simplifié) — en prod préférer un agent (promtail, fluent-bit)
+http.Post("http://loki:3100/loki/api/v1/push", "application/json", payload)
+```
+
+## 📋 Étape 5 — Requêtes LogQL utiles
+
+Dans Grafana → Explore → Loki :
+
+### Tous les échecs d'auth des 5 dernières minutes
+
+```logql
+{app="api"} |= "auth.failure"
+```
+
+### Top 10 IP avec le plus d'échecs
+
+```logql
+topk(10,
+  sum by (ip) (
+    count_over_time({app="api"} | json | event="auth.failure" [5m])
+  )
+)
+```
+
+### Brute force suspect (>50 échecs/5min depuis une IP)
+
+```logql
+sum by (ip) (
+  count_over_time({app="api"} | json | event="auth.failure" [5m])
+) > 50
+```
+
+→ tu pousses ça dans un Alertmanager rule (cf. Lab #4 homelab) → notif Slack.
+
+## 📋 Étape 6 — Reconstituer un parcours
+
+Imagine une plainte : "user alice s'est fait kick à 14h32".
+
+```bash
+# Récupérer le trace_id de la première req d'alice après 14:30
+TID=$(logcli query '{app="api"} | json | user="alice"' --from="2026-06-01T14:30:00Z" --limit=1 | jq -r '.trace_id')
+
+# Tout ce qui s'est passé sur cette requête
+logcli query "{app=\"api\"} | json | trace_id=\"$TID\""
+```
+
+Tu remontes : auth.success → rbac.denied → handler.error → ... en quelques secondes. Sans trace_id, c'est une heure de grep.
+
+## 🧠 Anti-patterns à éviter
+
+❌ **Logger les passwords en clair** : oui, ça arrive. Toujours filtrer avant slog.
+❌ **Logger les JWT entiers** : leakent l'identité + permettent le replay.
+❌ **Logger des PII sans nécessité** : RGPD. Hash ou anonymise.
+❌ **Niveau debug en prod** : disque saturé + I/O latency.
+❌ **Pas de rotation** : 1 fichier = 50 Go = OOM du logger.
+
+## 🔬 Validation
+
+- Un `curl -X POST` sans token → log JSON `auth.failure`
+- Un même `curl` avec `X-Trace-Id: test123` → on retrouve les events avec ce trace_id
+- Loki affiche les events filtrables par champ
+- LogQL brute-force detection retourne 0 (situation normale)
+- Tu fais 60 mauvais login en 1 min depuis la même IP → l'alerte se déclenche
+
+## 🚀 Suite
+
+➡️ **Lab #4 — Threat hunting et detection automatisée** : on construit des règles de détection basées sur ces logs, et on simule des attaques pour vérifier qu'on les voit.

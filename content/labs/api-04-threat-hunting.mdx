@@ -1,0 +1,266 @@
+---
+title: "API #4 — Threat hunting et détection automatisée"
+slug: api-04-threat-hunting
+objective: "Conclure la série en écrivant des règles de détection basées sur les logs des labs précédents, simuler des attaques (brute force, scan, privilege escalation) et vérifier qu'on les voit toutes."
+tag: Cybersécurité
+theme: cyan
+difficulty: avancé
+duration: "70 min"
+minRole: pro
+series: api-securisee-from-zero
+seriesOrder: 4
+prerequisites:
+  - "Avoir terminé les Labs #1 à #3 (API + logs structurés en Loki)"
+  - "Lecture du lab Threat modeling avec STRIDE recommandée"
+tools:
+  - "LogQL (Loki)"
+  - "Alertmanager"
+  - "hydra ou ffuf (simulation d'attaque)"
+  - "MITRE ATT&CK"
+quiz:
+  - question: "Qu'est-ce que le 'dwell time' en cybersécurité ?"
+    options:
+      - "Le temps de réponse d'une API"
+      - "Le délai entre la compromission et la détection — IBM rapporte ~200 jours en médiane sans détection mature"
+      - "La durée d'expiration d'un token"
+      - "Le temps de chargement d'un dashboard"
+    correct: 1
+    explanation: "Dwell time = temps pendant lequel l'attaquant est dans le système sans être vu. Plus c'est long, plus il a le temps d'exfiltrer. Réduire le dwell time = la mission #1 d'une détection. Sous 24h c'est bien, sous 1h c'est excellent."
+  - question: "Que signifient 'TTP' dans le contexte MITRE ATT&CK ?"
+    options:
+      - "Time To Patch"
+      - "Tactics, Techniques, and Procedures — comportement attaquant à 3 niveaux : objectif (tactic), méthode (technique), variante (procedure)"
+      - "Total Threat Probability"
+      - "Tunneling Through Proxies"
+    correct: 1
+    explanation: "MITRE ATT&CK : Tactic (objectif : Initial Access, Persistence, Exfil...), Technique (T1110 Brute Force), Procedure (T1110.001 Password Guessing). On détecte au niveau Technique idéalement — chaque procédure peut varier."
+  - question: "Quel est le but d'une 'detection-as-code' ?"
+    options:
+      - "Coder les détections en assembleur"
+      - "Versionner les règles de détection comme du code (Git, PR, tests) — reproductible, auditable, déployable comme une app"
+      - "Détecter les bugs dans le code source"
+      - "Coder les attaques"
+    correct: 1
+    explanation: "Detection-as-Code (DaC) : règles en YAML/Python dans un repo Git, tests unitaires (donné ce log → on doit alerter), déploiement via CI. Fini les règles dans un GUI qu'on oublie de documenter."
+  - question: "Pourquoi tester ses détections via 'purple team' est essentiel ?"
+    options:
+      - "Pour s'amuser"
+      - "Sans simulation d'attaque, on ne sait pas si nos détections fonctionnent vraiment — on découvre la panne le jour de l'incident, trop tard"
+      - "C'est obligatoire"
+      - "Pour entraîner les attaquants"
+    correct: 1
+    explanation: "Purple team = red (attaquant) + blue (défenseur) coordonnés. Le red exécute des TTPs précises, le blue vérifie qu'il alerte. Outils : Atomic Red Team, Caldera. On itère : si la détection rate, on la corrige, on retest."
+  - question: "Quel est l'intérêt d'une alerte 'low and slow' (taux d'erreur 5% > baseline) versus une alerte par seuil dur (>100 errors/min) ?"
+    options:
+      - "Low and slow est plus rapide"
+      - "Les attaquants évitent les seuils durs (15 attempts/h au lieu de 1000/h). Comparer au baseline (rolling avg) attrape les anomalies subtiles sous le seuil"
+      - "Low and slow consomme moins de RAM"
+      - "Les seuils durs sont obsolètes"
+    correct: 1
+    explanation: "Brute force naïf = 10000 req/min → seuil dur le voit. Brute force évolué = 5 req/h pendant 1 semaine → invisible pour seuil dur. Détection par déviation du baseline (anomaly detection) attrape les deux."
+---
+
+> 📚 **Série « API sécurisée from zero »** — Lab 4 / 4. L'API a des logs propres (Lab #3). On va maintenant écrire les détections et les tester pour de vrai.
+
+## 🧠 Théorie : detection-as-code et la pyramide de Bianco
+
+### La "Pyramid of Pain" de David Bianco
+
+Ce que tu détectes définit combien tu fais souffrir l'attaquant pour s'adapter :
+
+```
+        ▲  TTPs / comportement      ┃  ━━━ DOULOUREUX
+        │  (T1110 brute force)      ┃       (refactor d'attaque)
+        │                            ┃
+   ┃ Tools (cobalt strike, mimikatz) ┃  ━━━ ÉLEVÉ
+   ┃                                  ┃
+   ┃ Network artifacts (User-Agent)   ┃  ━━━ ANNOYANT
+   ┃                                  ┃
+   ┃ Host artifacts (file hash)       ┃  ━━━ FACILE
+   ┃                                  ┃
+   ┃ Domain names                     ┃  ━━━ TRIVIAL
+   ┃                                  ┃
+   ┃ IP addresses                     ┃  ━━━ TRIVIAL
+   ┃                                  ┃
+   ┃ Hash values                      ┃  ━━━ TRIVIAL  (1 byte change → différent)
+   ▼                                   ━━━
+```
+
+**Détecter sur des IP ou hashes :** l'attaquant change → tu rates. **Détecter sur des comportements (3 logins ratés puis 1 réussi puis création d'admin) :** l'attaquant doit changer toute sa méthode.
+
+## 🎯 Objectif
+
+À la fin :
+- 5 règles de détection couvrant les TTPs courantes contre une API
+- Tests purple team (on simule, on vérifie qu'on voit)
+- Alertes Alertmanager actives
+- Mapping MITRE ATT&CK pour chaque règle
+
+## 📐 Architecture de détection
+
+```
+   Logs JSON     LogQL alertes     Alertmanager     Réponse
+   (Lab #3)      ────────────►     ─────────────►   ──────────────►
+       │           règles                              Slack/SOAR
+       │           seuils                              kube-delete
+       │
+       ▼
+   Loki (rétention 30 jours pour hunt manuel)
+```
+
+## 📋 Règle 1 — Brute force sur l'authentification
+
+**MITRE** : T1110.001 (Password Guessing)
+
+```yaml
+# rules/detection.yaml — format Loki alerting
+groups:
+  - name: api-security
+    rules:
+      - alert: ApiBruteForce
+        expr: |
+          sum by (ip) (
+            count_over_time({app="api"} | json | event="auth.failure" [5m])
+          ) > 30
+        for: 1m
+        labels:
+          severity: high
+          mitre_tactic: credential_access
+          mitre_technique: T1110.001
+        annotations:
+          summary: "Brute force suspect depuis {{ $labels.ip }}"
+          runbook: "Vérifier whois IP, bloquer au firewall si confirmé"
+```
+
+### Simulation : on attaque
+
+```bash
+# Avec hydra (apt install hydra)
+hydra -l alice -P /usr/share/wordlists/rockyou.txt -t 4 \
+  api.homelab.lan http-post-form "/login:user=^USER^&password=^PASS^:F=invalid"
+```
+
+→ après 1 minute l'alerte se déclenche.
+
+## 📋 Règle 2 — Énumération de comptes
+
+**MITRE** : T1087 (Account Discovery)
+
+Symptôme : beaucoup d'IPs différentes, beaucoup d'users testés, peu de hits par user.
+
+```logql
+# Nombre d'users distincts essayés par IP en 10min
+count by (ip) (
+  count_over_time({app="api"} | json | event="auth.failure" [10m])
+) > 50
+```
+
+Ou plus subtil — un seul attaquant testant beaucoup d'users :
+
+```logql
+sum by (ip) (
+  count_over_time({app="api"} | json | event="auth.failure" | line_format "{{.user}}" [10m])
+)
+```
+
+## 📋 Règle 3 — RBAC denied en série (recon de permissions)
+
+**MITRE** : T1087.004 (Cloud Account Discovery)
+
+Quand un user authentifié tente d'accéder à 10+ endpoints sans permission en 5 min → il scanne, pas une faute de clic.
+
+```logql
+sum by (user) (
+  count_over_time({app="api"} | json | event="rbac.denied" [5m])
+) > 10
+```
+
+## 📋 Règle 4 — Privilege escalation après login
+
+**MITRE** : T1078 (Valid Accounts) suivi de T1098 (Account Manipulation)
+
+Pattern à détecter : `auth.success` puis `rbac.granted` sur `users:write` ou `admin:*` dans les 5 minutes pour un user qui n'a jamais touché à ces endpoints avant.
+
+Cette détection est plus complexe — généralement on l'écrit en code (Python + Loki) plutôt qu'en LogQL pur :
+
+```python
+# detector/escalation.py
+for user, events in group_by_user(last_5_min):
+    if 'admin:create' in events and user not in known_admins:
+        alert(f"Suspicious admin action by non-admin user: {user}")
+```
+
+## 📋 Règle 5 — Anomaly detection par baseline
+
+**Approche** : on calcule la moyenne et l'écart-type des erreurs sur 7 jours, on alerte sur écart > 3σ.
+
+```logql
+# Si le taux d'erreur 4xx sur 5min > moyenne 7j + 3 écarts-types
+(
+  sum(rate({app="api"} | json | status>=400 | status<500 [5m]))
+)
+>
+(
+  avg_over_time(
+    sum(rate({app="api"} | json | status>=400 | status<500 [5m]))[7d:5m]
+  )
+  + 3 *
+  stddev_over_time(
+    sum(rate({app="api"} | json | status>=400 | status<500 [5m]))[7d:5m]
+  )
+)
+```
+
+> 💡 Garde 7+ jours dans Loki ! 24h ne suffit pas pour un baseline pertinent.
+
+## 📋 Validation purple team
+
+| Attaque | Outil | Alerte attendue | Délai max |
+|---|---|---|---|
+| Brute force 100 req/min | hydra | ApiBruteForce | < 1 min |
+| Enum users via ffuf | ffuf | ApiAccountEnumeration | < 10 min |
+| RBAC denied scan | curl loop | ApiRbacRecon | < 5 min |
+| Login + admin action | manuel | ApiPrivEsc | < 2 min |
+| 4xx burst soudain | ab | ApiAnomaly | < 5 min |
+
+**Exécute chaque attaque. Note le délai. Si une alerte rate, débogue avant le prochain test.**
+
+## 🧠 Documentation pour le SOC
+
+Chaque alerte doit avoir un **runbook** :
+
+```markdown
+# Runbook : ApiBruteForce
+
+## Vérifier
+1. logcli query 'event="auth.failure" | ip="$IP"'
+2. Combien d'users distincts essayés ?
+3. Y a-t-il un succès dans le timeframe ?
+
+## Mitiger
+- Si confirmé : bloquer au firewall (iptables, Cloudflare)
+- Forcer reset du password des users testés avec succès
+- Vérifier les sessions actives de ces users
+
+## Communiquer
+- Ouvrir ticket Jira sec-XXX
+- Notif #security-incidents
+```
+
+## 🚀 Pour aller plus loin
+
+- **Sigma** : format universel pour exprimer des détections (convertible Loki, Elastic, Splunk)
+- **Atomic Red Team** : catalogue de simulations d'attaque scriptées par TTP
+- **CALDERA** : framework de simulation d'adversaire complet
+- **MITRE D3FEND** : la contrepartie défensive d'ATT&CK
+- **Detection Engineering Matrix** : maturité de chaque règle (brouillon → testé → mesuré → automatisé)
+
+## 🎉 Bravo — fin de la série « API sécurisée from zero »
+
+Tu as construit en 4 labs :
+- Une **auth JWT** RS256 résistante (alg:none bloqué, kid rotation)
+- Un **rate limit + RBAC** Redis-backed
+- Des **logs structurés** corrélés par trace_id, ingérés en Loki
+- Des **détections automatisées** mappées MITRE ATT&CK, validées par simulation
+
+C'est la chaîne complète **prévention → observation → détection → réponse**. La même architecture qu'une vraie API de prod chez un acteur sérieux.

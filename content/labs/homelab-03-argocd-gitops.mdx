@@ -1,0 +1,319 @@
+---
+title: "Homelab #3 — GitOps avec ArgoCD"
+slug: homelab-03-argocd-gitops
+objective: "Comprendre les 4 principes du GitOps, installer ArgoCD, migrer l'app demo vers Git et observer le mécanisme de réconciliation (drift detection + self-healing)."
+tag: Infrastructure
+theme: violet
+difficulty: intermédiaire
+duration: "55 min"
+minRole: pro
+series: homelab-from-zero
+seriesOrder: 3
+prerequisites:
+  - "Avoir terminé les Labs #1 et #2"
+  - "Un dépôt Git (GitHub, GitLab, Forgejo) accessible depuis le cluster"
+  - "Notions de base YAML et Kubernetes"
+tools:
+  - "ArgoCD"
+  - "kubectl"
+  - "Git"
+quiz:
+  - question: "Quels sont les 4 principes du GitOps (par OpenGitOps) ?"
+    options:
+      - "Déclaratif, versionné, pull automatique, réconciliation continue"
+      - "Impératif, monorepo, push-based, déploiement manuel"
+      - "Cloud-native, Kubernetes-only, Helm-based, immutable"
+      - "Stateless, microservices, CI/CD, observability"
+    correct: 0
+    explanation: "Les 4 principes formels : (1) Déclaratif — l'état désiré est décrit, pas les étapes ; (2) Versionné et immutable — Git ; (3) Pull automatique — un agent applique ; (4) Réconciliation continue — convergence vers l'état Git."
+  - question: "Quelle est la différence entre 'prune: true' et 'selfHeal: true' dans la syncPolicy ArgoCD ?"
+    options:
+      - "Ils font la même chose"
+      - "prune supprime du cluster ce qui n'est plus en Git ; selfHeal annule les modifications manuelles faites au cluster"
+      - "prune fait des backups ; selfHeal restaure les backups"
+      - "prune limite la mémoire ; selfHeal redémarre les pods"
+    correct: 1
+    explanation: "Deux mécanismes distincts. Prune réagit aux suppressions Git (supprime les ressources orphelines). SelfHeal réagit aux dérives cluster (ramène l'état désiré). Tu peux activer l'un sans l'autre."
+  - question: "Pourquoi le pattern 'push-based CI/CD' est-il moins sécurisé qu'un pattern pull GitOps ?"
+    options:
+      - "Push est toujours plus lent"
+      - "Push nécessite que le CI ait des credentials d'écriture sur le cluster ; pull garde les credentials côté cluster"
+      - "Push ne supporte pas Kubernetes"
+      - "Push ne fonctionne pas en multi-cluster"
+    correct: 1
+    explanation: "Dans un pattern push, ton CI doit avoir un kubeconfig avec droits cluster-admin. Si le CI est compromis (ce qui arrive), l'attaquant a le cluster. En pull, le cluster va chercher l'état dans Git — aucune surface externe."
+  - question: "Que se passe-t-il si tu fais 'kubectl scale deployment whoami --replicas=5' avec selfHeal activé ?"
+    options:
+      - "ArgoCD bloque la commande immédiatement"
+      - "Les 5 replicas tournent jusqu'à suppression manuelle"
+      - "ArgoCD détecte le drift sous ~3 minutes et ramène le déploiement au nombre défini en Git"
+      - "ArgoCD émet une alerte mais ne fait rien"
+    correct: 2
+    explanation: "selfHeal compare état désiré (Git) à état observé (cluster). À chaque cycle (~180s par défaut), si dérive, ArgoCD ré-applique l'état Git. Le scale manuel est annulé."
+  - question: "Quel est l'intérêt du pattern 'app-of-apps' ?"
+    options:
+      - "Une Application 'root' qui déploie en cascade N autres Applications — toute la stack du cluster vit en Git"
+      - "C'est obligatoire pour ArgoCD"
+      - "Réduit la consommation mémoire"
+      - "Améliore la sécurité du dépôt Git"
+    correct: 0
+    explanation: "App-of-apps : une seule Application root pointe vers un dossier Git contenant N Applications. Tu l'appliques une fois → ArgoCD découvre et déploie tout le reste. Bootstrap d'un cluster vierge en 1 kubectl apply."
+---
+
+> 📚 **Série « Homelab from zero »** — Lab 3 / 5. Le cluster k3s+Cilium du Lab #2 sert de base. On va déplacer toute la config en Git.
+
+## 🧠 Théorie : qu'est-ce que GitOps exactement ?
+
+GitOps n'est pas "j'ai mis mes YAML sur GitHub". C'est une **discipline opérationnelle** définie par 4 principes (OpenGitOps) :
+
+| # | Principe | Implication |
+|---|---|---|
+| 1 | **Déclaratif** | On décrit *ce qu'on veut*, pas *comment l'obtenir*. YAML > scripts impératifs. |
+| 2 | **Versionné et immutable** | Git est la source de vérité unique. Toute modif passe par un commit. |
+| 3 | **Pulled automatiquement** | Un agent dans le cluster pull l'état désiré. Pas de push externe. |
+| 4 | **Réconciliation continue** | L'agent compare en boucle observé vs. désiré et corrige. |
+
+### Push CI/CD vs Pull GitOps
+
+```
+   Push (Jenkins, GitHub Actions → kubectl)
+
+   ┌────────────┐  kubectl apply   ┌─────────────┐
+   │ CI runner  │ ───────────────► │ Kubernetes  │
+   │            │   (credentials)  │  API        │
+   └────────────┘                  └─────────────┘
+        ▲
+        │ trigger
+        │
+   ┌────────────┐
+   │   Git      │
+   └────────────┘
+
+   ⚠️  CI a un kubeconfig → si compromis, cluster compromis
+
+
+   Pull (ArgoCD, Flux)
+
+   ┌────────────┐                  ┌─────────────┐
+   │   Git      │ ◄────────── pull │  ArgoCD     │ in-cluster
+   │            │                  │   Agent     │
+   └────────────┘                  └──────┬──────┘
+                                          │ kubectl apply (local)
+                                          ▼
+                                   ┌─────────────┐
+                                   │ Kubernetes  │
+                                   │  API        │
+                                   └─────────────┘
+
+   ✅  Aucun credential cluster exposé hors du cluster
+```
+
+## 🎯 Objectif
+
+- ArgoCD installé et accessible
+- L'app `whoami` du Lab #2 redéployée depuis un dépôt Git
+- Drift detection vérifié (modifier en main → ArgoCD recolle)
+- Rollback par `git revert` testé
+
+## 📐 Architecture cible du lab #3
+
+```
+        ┌──────────────────────┐
+        │  Dépôt Git           │
+        │  homelab-gitops/     │
+        │  ├ apps/whoami/      │  ← source de vérité
+        │  └ infra/monitoring/ │
+        └──────────┬───────────┘
+                   │ pull (HTTPS / SSH)
+                   ▼
+   ┌─────────────────────────────────────────┐
+   │  Cluster k3s + Cilium                   │
+   │                                         │
+   │  ┌─────────────────────────────────┐    │
+   │  │       ArgoCD (in-cluster)       │    │
+   │  │                                 │    │
+   │  │   ┌─────────┐    ┌─────────┐    │    │
+   │  │   │ Repo    │───►│ Sync    │    │    │
+   │  │   │ Server  │    │ Loop    │    │    │
+   │  │   └─────────┘    │ (180s)  │    │    │
+   │  │                  └────┬────┘    │    │
+   │  │                       │ apply   │    │
+   │  │                       ▼         │    │
+   │  │   ┌─────────────────────────┐   │    │
+   │  │   │  Kubernetes API server  │   │    │
+   │  │   └────────────┬────────────┘   │    │
+   │  └────────────────┼─────────────────    │
+   │                   ▼                     │
+   │            ┌──────────────┐             │
+   │            │ ns demo      │             │
+   │            │ ├ whoami x2  │             │
+   │            │ └ networkpol │             │
+   │            └──────────────┘             │
+   └─────────────────────────────────────────┘
+```
+
+## 📋 Étape 1 — Installer ArgoCD
+
+```bash
+kubectl create namespace argocd
+kubectl apply -n argocd \
+  -f https://raw.githubusercontent.com/argoproj/argo-cd/stable/manifests/install.yaml
+kubectl wait --for=condition=available --timeout=300s \
+  -n argocd deployment/argocd-server
+
+# Mot de passe initial
+kubectl -n argocd get secret argocd-initial-admin-secret \
+  -o jsonpath="{.data.password}" | base64 -d ; echo
+```
+
+Port-forward pour accéder à l'UI :
+
+```bash
+kubectl port-forward -n argocd svc/argocd-server 8080:443 --address=0.0.0.0
+```
+
+→ https://192.168.1.20:8080 (login : `admin`).
+
+## 📋 Étape 2 — Préparer le dépôt Git
+
+```
+homelab-gitops/
+├── apps/
+│   └── whoami/
+│       ├── namespace.yaml
+│       ├── deployment.yaml
+│       ├── service.yaml
+│       └── networkpolicy.yaml
+└── infra/                  ← pour les labs suivants
+```
+
+Contenu de `deployment.yaml` :
+
+```yaml
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: whoami
+  namespace: demo
+spec:
+  replicas: 2
+  selector: { matchLabels: { app: whoami } }
+  template:
+    metadata: { labels: { app: whoami } }
+    spec:
+      containers:
+        - name: whoami
+          image: traefik/whoami:v1.10
+          ports: [ { containerPort: 80 } ]
+          resources:
+            requests: { cpu: 50m, memory: 32Mi }
+            limits:   { cpu: 200m, memory: 128Mi }
+```
+
+Commit + push.
+
+## 📋 Étape 3 — Connecter le dépôt à ArgoCD
+
+```yaml
+# argocd-app.yaml
+apiVersion: argoproj.io/v1alpha1
+kind: Application
+metadata:
+  name: whoami
+  namespace: argocd
+spec:
+  project: default
+  source:
+    repoURL: https://github.com/<ton-user>/homelab-gitops.git
+    targetRevision: main
+    path: apps/whoami
+  destination:
+    server: https://kubernetes.default.svc
+    namespace: demo
+  syncPolicy:
+    automated:
+      prune: true       # supprime ce qui n'est plus en Git
+      selfHeal: true    # ramène l'état du cluster vers Git
+    syncOptions:
+      - CreateNamespace=true
+```
+
+```bash
+# Nettoie d'abord le déploiement manuel du Lab #2
+kubectl delete -n demo deployment whoami
+kubectl delete -n demo service whoami
+
+# Applique
+kubectl apply -f argocd-app.yaml
+```
+
+## 📋 Étape 4 — Tester la self-healing
+
+```bash
+kubectl scale -n demo deployment whoami --replicas=5
+kubectl -n demo get deploy whoami        # → 5 replicas
+# attendre 1-3 min
+kubectl -n demo get deploy whoami        # → 2 replicas (ArgoCD a recollé)
+```
+
+### Cycle de réconciliation visualisé
+
+```
+   t=0s     git push
+              │
+   t=10s     ArgoCD repo-server poll
+              │
+   t=15s     compute diff désiré ↔ observé
+              │
+   t=20s     APPLY changements via API server
+              │
+   t=25s     Kubernetes converge → état Healthy
+              │
+   t=180s    nouveau cycle (boucle infinie)
+```
+
+## 📋 Étape 5 — Rollback par revert Git
+
+Modifie `deployment.yaml` en Git : remplace `image: traefik/whoami:v1.10` par `image: nginx:1.27`. Commit + push. ArgoCD redéploie.
+
+Tu n'aimes pas ?
+
+```bash
+git revert HEAD
+git push
+```
+
+→ ArgoCD remet `whoami`. **Ton `git log` est ton historique de production.**
+
+## 🧠 Pourquoi le pattern app-of-apps
+
+```
+homelab-gitops/
+├── bootstrap/
+│   └── root-app.yaml    ← Application qui pointe vers apps/
+└── apps/
+    ├── whoami.yaml      ← Application whoami
+    ├── monitoring.yaml  ← Application prometheus (lab #4)
+    └── falco.yaml       ← Application falco (lab #5)
+```
+
+Tu appliques `root-app.yaml` une seule fois → ArgoCD découvre les Applications et les déploie en cascade. On l'utilisera aux Labs #4 et #5.
+
+## 🔬 Snapshot post-lab
+
+```bash
+for id in 100 101; do
+  qm snapshot $id base-after-lab3 --description "Fin Lab #3 — ArgoCD GitOps en place"
+done
+```
+
+## ✅ Validation
+
+- ArgoCD UI affiche l'app **Healthy + Synced**
+- Modifier à la main est annulé sous 3 min
+- `git revert` rollback effectif
+- Le namespace `demo` est créé par ArgoCD lui-même
+
+## 🚀 Suite
+
+➡️ **Lab #4 — Observabilité avec Prometheus, Loki et Grafana** : on déploie le stack complet via ArgoCD (donc en GitOps) et on instrumente l'app whoami.

@@ -1,0 +1,232 @@
+---
+title: "Threat modeling avec STRIDE — modéliser les menaces avant de coder"
+slug: threat-modeling-stride
+objective: "Apprendre à analyser une architecture avant qu'elle existe : cartographier les trust boundaries, identifier les menaces STRIDE, prioriser avec DREAD."
+tag: Cybersécurité
+theme: cyan
+difficulty: intermédiaire
+duration: "60 min"
+minRole: pro
+prerequisites:
+  - "Lire un schéma d'architecture"
+  - "Aucun setup technique — c'est un lab méthodologique"
+tools:
+  - "Crayon + papier (ou Excalidraw, draw.io)"
+  - "Optionnel : Microsoft Threat Modeling Tool"
+quiz:
+  - question: "Que veut dire l'acronyme STRIDE ?"
+    options:
+      - "Security, Trust, Risk, Identity, Defense, Encryption"
+      - "Spoofing, Tampering, Repudiation, Information disclosure, Denial of service, Elevation of privilege"
+      - "Six Tools for Risk In Distributed Environments"
+      - "Standard Threat Risk Identification & Documentation Engine"
+    correct: 1
+    explanation: "STRIDE = 6 catégories de menaces, inventé par Microsoft. Chacune correspond à une propriété de sécurité brisée : Spoofing brise authenticity, Tampering brise integrity, etc."
+  - question: "Qu'est-ce qu'un 'trust boundary' dans un Data Flow Diagram ?"
+    options:
+      - "Une ligne entre deux composants amis"
+      - "Une frontière où le niveau de confiance change — typiquement entre internet et l'app, entre app et DB, entre microservices, entre tenants"
+      - "Le périmètre du datacenter"
+      - "La limite des permissions"
+    correct: 1
+    explanation: "Une trust boundary est l'endroit où les données changent de domaine de confiance. Chaque flux qui la traverse doit être analysé sous STRIDE. C'est LE concept clé du threat modeling — sans ça, tu cherches des menaces partout sans focus."
+  - question: "Quelle menace STRIDE attaque la propriété d'authenticité ?"
+    options:
+      - "Tampering"
+      - "Spoofing"
+      - "Denial of service"
+      - "Repudiation"
+    correct: 1
+    explanation: "Spoofing = se faire passer pour quelqu'un d'autre. C'est la menace contre l'authenticity. Contre-mesure : authentification forte (mTLS, MFA, signatures)."
+  - question: "Que prouve un mécanisme de 'non-repudiation' ?"
+    options:
+      - "Que les données n'ont pas été modifiées"
+      - "Qu'un utilisateur ne peut pas nier avoir effectué une action — typiquement via signatures + audit logs"
+      - "Que les données sont chiffrées"
+      - "Que le service est disponible"
+    correct: 1
+    explanation: "Non-repudiation = preuve cryptographique d'une action. Standards : signatures numériques (asymetrique), logs audit append-only, certificats de transaction. Contre la menace Repudiation."
+  - question: "Pourquoi DREAD est-il maintenant déconseillé pour scorer les menaces ?"
+    options:
+      - "DREAD est obsolète"
+      - "Les 5 critères sont jugés subjectifs (impossible de scorer Damage/Reproducibility avec rigueur) ; on préfère CVSS ou des matrices likelihood × impact"
+      - "DREAD ne couvre pas assez de menaces"
+      - "DREAD est trop lent"
+    correct: 1
+    explanation: "DREAD (Damage, Reproducibility, Exploitability, Affected users, Discoverability) → trop subjectif, peu reproductible entre analystes. Microsoft l'a abandonné en interne. Préfère CVSS (standardisé) ou matrices simples 3×3."
+---
+
+## 🧠 Pourquoi le threat modeling avant de coder ?
+
+90% des vulnérabilités graves viennent de **décisions d'architecture**, pas de bugs d'implémentation. Un bug XSS se patche en 5 min. Une absence de séparation des privilèges nécessite de réécrire des services entiers.
+
+Le threat modeling intervient **avant** que le code existe — au moment du design — quand changer une décision coûte 100× moins cher.
+
+```
+   Coût de correction d'une faille selon le moment :
+
+   Design     ┃ ▓ 1×
+   Code       ┃ ▓▓▓ 6×
+   Test       ┃ ▓▓▓▓▓▓▓▓ 15×
+   Production ┃ ▓▓▓▓▓▓▓▓▓▓▓▓▓▓▓▓▓▓▓▓▓▓▓▓▓▓▓▓▓▓▓▓▓▓▓▓▓ 100×
+              └────────────────────────────────────────►
+                              Temps
+```
+
+## 🎯 Objectif
+
+Apprendre à analyser une architecture (réelle ou hypothétique) en 4 étapes :
+1. Dessiner le **Data Flow Diagram**
+2. Identifier les **trust boundaries**
+3. Appliquer **STRIDE** sur chaque flux
+4. Prioriser avec une matrice **likelihood × impact**
+
+On va appliquer ça à un cas concret : une API de chat avec auth JWT.
+
+## 📐 Étape 1 — Le système à analyser
+
+**Contexte** : une app web où des utilisateurs se connectent et envoient des messages, stockés en DB, livrés en temps réel via WebSocket.
+
+```
+                  ┌─────────┐
+                  │  User   │  (browser)
+                  └────┬────┘
+                       │ HTTPS
+                       ▼
+              ┌────────────────┐
+              │   API Gateway  │
+              │  (rate limit)  │
+              └───┬─────────┬──┘
+                  │         │
+        REST API  │         │ WebSocket
+                  ▼         ▼
+          ┌──────────┐  ┌──────────┐
+          │ Auth svc │  │ Chat svc │
+          │ (JWT)    │  │          │
+          └────┬─────┘  └────┬─────┘
+               │              │
+               └──────┬───────┘
+                      ▼
+                ┌──────────┐
+                │ Postgres │
+                └──────────┘
+```
+
+## 📐 Étape 2 — Tracer les trust boundaries
+
+Une trust boundary apparaît partout où **le niveau de confiance change** :
+
+```
+                  ┌─────────┐
+                  │  User   │   trust=0 (anonyme)
+                  └────┬────┘
+                       │
+        ━━━━━━━━━━━━━━━┿━━━━━━━━━━━━━━━━ Boundary 1 : Internet ↔ DMZ
+                       │
+                       ▼
+              ┌────────────────┐
+              │   API Gateway  │   trust=app (vérifie token)
+              └───┬─────────┬──┘
+                  │         │
+        ━━━━━━━━━━┿━━━━━━━━━┿━━━━━━━━━━━ Boundary 2 : DMZ ↔ internal
+                  │         │
+                  ▼         ▼
+          ┌──────────┐  ┌──────────┐
+          │ Auth svc │  │ Chat svc │   trust=high (services internes)
+          └────┬─────┘  └────┬─────┘
+               │              │
+        ━━━━━━━┿━━━━━━━━━━━━━━┿━━━━━━━━━━ Boundary 3 : app ↔ data layer
+               │              │
+               └──────┬───────┘
+                      ▼
+                ┌──────────┐
+                │ Postgres │   trust=critical
+                └──────────┘
+```
+
+Chaque **flux qui traverse une boundary** doit être analysé avec STRIDE.
+
+## 🔬 Étape 3 — Appliquer STRIDE flux par flux
+
+Pour chaque catégorie, on se demande : *est-ce une menace plausible ici ? Quelle contre-mesure ?*
+
+### Sur Boundary 1 (User → API Gateway)
+
+| Menace | Question | Contre-mesure |
+|---|---|---|
+| **S**poofing | User non-auth peut se faire passer pour un autre ? | TLS + JWT signé, MFA pour actions sensibles |
+| **T**ampering | User peut modifier le payload en transit ? | TLS (intégrité fournie par HMAC TLS) |
+| **R**epudiation | User peut nier avoir envoyé un message ? | Audit log signé côté API, timestamp serveur |
+| **I**nfo disclosure | Headers/erreurs leakent des infos ? | Pas de stack trace en prod, pas d'IDs séquentiels prévisibles |
+| **D**oS | User flood l'API ? | Rate limit par IP + par token au gateway |
+| **E**oP | Token JWT peut être forgé pour role=admin ? | JWT signé asymétriquement (RS256 pas HS256), validation stricte des claims |
+
+### Sur Boundary 2 (Gateway → microservices)
+
+| Menace | Contre-mesure principale |
+|---|---|
+| Spoofing | mTLS entre services (PKI privée — cf. [lab step-ca](/labs/pki-step-ca)) |
+| Tampering | mTLS apporte aussi l'intégrité |
+| Info disclosure | NetworkPolicies pour limiter qui parle à qui ([lab homelab #2](/labs/homelab-02-k3s-cilium)) |
+| EoP | RBAC service-to-service (chaque service a un compte SA limité) |
+
+### Sur Boundary 3 (svc → Postgres)
+
+| Menace | Contre-mesure |
+|---|---|
+| Spoofing | Auth Postgres + mTLS connexion DB |
+| Tampering | Pas de DB partagée entre tenants (séparation par schema/db) |
+| Info disclosure | Row Level Security pour multi-tenant, colonnes chiffrées pour PII |
+| DoS | Connection pool dimensionné, pgBouncer en amont |
+| EoP | Comptes app NON superuser, audit pg_audit |
+
+## 📐 Étape 4 — Prioriser
+
+Au lieu de DREAD (subjectif), une matrice simple :
+
+```
+                          IMPACT
+                  Low      Med      High
+              ┌────────┬────────┬────────┐
+       High   │   M    │   H    │   C    │
+              │        │        │critique│
+   LIKELIHOOD ┼────────┼────────┼────────┤
+       Med    │   L    │   M    │   H    │
+              │        │        │        │
+              ┼────────┼────────┼────────┤
+       Low    │   L    │   L    │   M    │
+              │        │        │        │
+              └────────┴────────┴────────┘
+```
+
+Exemple de hiérarchisation après l'analyse :
+
+| Menace | Likelihood | Impact | Score | Action |
+|---|---|---|---|---|
+| JWT forge (HS256 mal-configuré) | High | High | **CRITIQUE** | Migrer RS256 immédiatement |
+| WebSocket flood | Med | Med | **M** | Rate limit par session |
+| Stack trace exposé | High | Low | **M** | Strip en production |
+| SQLi via ORM | Low | High | **H** | Parameterized queries (déjà fait) |
+| DB compromise via shared password | Low | High | **H** | Secrets manager |
+
+## 🧠 Anti-patterns courants
+
+- ❌ **Threat modeling après le déploiement** : trop tard, coûte 100×
+- ❌ **Exhaustivité fantasmée** : viser 100% des menaces → paralysie. Vise 80%, focus sur les boundaries
+- ❌ **STRIDE sans data flow** : on liste des risques au hasard. Le diagramme est indispensable
+- ❌ **DREAD comme dogme** : préférer matrices simples et reproductibles
+
+## ✅ Validation
+
+À la fin de ce lab, tu sais :
+- Dessiner un DFD avec trust boundaries explicites
+- Appliquer les 6 catégories STRIDE flux par flux
+- Prioriser pragmatiquement les menaces identifiées
+- Argumenter une contre-mesure par le risque, pas par "best practice"
+
+## 🚀 Pour aller plus loin
+
+- **Microsoft Threat Modeling Tool** : automatise la génération STRIDE depuis un DFD
+- **PASTA** (Process for Attack Simulation and Threat Analysis) : méthodologie complémentaire orientée attaquant
+- **OWASP Threat Dragon** : alternative open-source
+- **MITRE ATT&CK** : catalogue des TTPs réels, à croiser avec ton modèle pour vérifier la couverture

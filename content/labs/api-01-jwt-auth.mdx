@@ -1,0 +1,370 @@
+---
+title: "API #1 — Authentification JWT en pratique"
+slug: api-01-jwt-auth
+objective: "Comprendre OAuth/OIDC et JWT en profondeur, monter une API REST Go avec auth JWT (RS256), gérer la rotation de clés et bloquer les abus classiques."
+tag: Cybersécurité
+theme: cyan
+difficulty: intermédiaire
+duration: "60 min"
+series: api-securisee-from-zero
+seriesOrder: 1
+prerequisites:
+  - "Notions de HTTP et REST"
+  - "Go 1.22+ installé (ou Node si tu préfères adapter)"
+  - "OpenSSL pour générer les clés"
+tools:
+  - "Go (net/http)"
+  - "golang-jwt/jwt"
+  - "OpenSSL"
+  - "jq"
+quiz:
+  - question: "Quelle est la différence entre OAuth 2.0 et OIDC (OpenID Connect) ?"
+    options:
+      - "OAuth 2.0 est obsolète, OIDC est la nouvelle version"
+      - "OAuth 2.0 fait de l'autorisation (accès à des ressources) ; OIDC ajoute une couche d'authentification (identité du user) au-dessus d'OAuth 2.0"
+      - "Ils sont identiques"
+      - "OAuth est pour les apps web, OIDC pour les mobiles"
+    correct: 1
+    explanation: "OAuth 2.0 : 'le user m'autorise à accéder à ses données' → access_token. OIDC : 'voici l'identité du user' → ID token (un JWT signé). Les deux coexistent : un flow OIDC retourne souvent access_token + id_token."
+  - question: "Pourquoi RS256 (asymétrique) est-il préférable à HS256 (symétrique) pour signer un JWT en architecture distribuée ?"
+    options:
+      - "RS256 est plus rapide"
+      - "Avec HS256, chaque service vérificateur a besoin du secret de signature — un compromis = forge possible. RS256 : seul l'émetteur a la clé privée, les vérificateurs ont uniquement la clé publique"
+      - "RS256 produit des tokens plus courts"
+      - "HS256 est obsolète"
+    correct: 1
+    explanation: "HS256 = HMAC avec un secret partagé. Si 5 microservices vérifient des tokens, ils ont tous le secret — surface d'attaque énorme. RS256 = signature asymétrique : la clé publique distribuée ne permet QUE de vérifier, pas de forger."
+  - question: "Quelle attaque exploite un JWT où alg='none' est accepté ?"
+    options:
+      - "Replay attack"
+      - "L'attaquant retire la signature et change les claims (role: admin) — le serveur naïf accepte parce qu'il fait confiance à l'en-tête 'alg'"
+      - "Brute force"
+      - "Man-in-the-middle"
+    correct: 1
+    explanation: "Faille critique trouvée dans plein de libs JWT. Si tu accordes la valeur de 'alg' venant du token, un attaquant pose 'alg: none' + claims customisés. Toujours forcer l'algorithme côté serveur, jamais lire celui du header."
+  - question: "Que stocke-t-on dans le claim 'exp' d'un JWT et pourquoi est-il critique ?"
+    options:
+      - "L'IP de l'utilisateur"
+      - "Le timestamp d'expiration (Unix epoch) — sans 'exp' un token compromis est utilisable à vie"
+      - "Le nom de l'API"
+      - "Le rôle de l'utilisateur"
+    correct: 1
+    explanation: "exp = expiration. Sans elle, un token volé = accès permanent. Bonne pratique : access_token court (15 min) + refresh_token long stocké côté serveur, révocable."
+  - question: "Pourquoi 'kid' (key ID) dans le header JWT est important pour la rotation des clés ?"
+    options:
+      - "Il identifie l'utilisateur"
+      - "Il pointe vers la clé publique qui a signé le token — permet de tourner plusieurs clés et de retirer les anciennes sans casser les tokens en circulation"
+      - "Il chiffre le contenu"
+      - "Il est obligatoire pour HS256"
+    correct: 1
+    explanation: "Rotation : tu génères une nouvelle paire de clés (kid=v2), tu commences à signer avec, mais tu gardes la clé publique kid=v1 valide pendant la durée de vie des derniers tokens émis. Sans 'kid', impossible de distinguer."
+---
+
+> 📚 **Série « API sécurisée from zero »** — Lab 1 / 4. On part de rien et on construit une API REST sécurisée prête pour la prod.
+
+## 🧠 Théorie : qu'est-ce qu'un JWT exactement ?
+
+Un JWT (JSON Web Token, RFC 7519) est une chaîne en 3 parties séparées par des points :
+
+```
+   eyJhbGciOiJSUzI1NiIsInR5cCI6IkpXVCIsImtpZCI6InYxIn0.eyJzdWIi...QGFwa.signature
+
+   ┌────────────────┐   ┌──────────────────┐   ┌─────────────┐
+   │     Header     │ . │     Payload      │ . │  Signature  │
+   │  (b64 JSON)    │   │   (b64 JSON)     │   │  (b64 sig)  │
+   └────────────────┘   └──────────────────┘   └─────────────┘
+
+   Header  = { "alg": "RS256", "typ": "JWT", "kid": "v1" }
+   Payload = { "sub": "kim@example.com", "exp": 1717246800, "role": "user" }
+   Signature = sign( base64(header) + "." + base64(payload), private_key )
+```
+
+Le payload n'est **pas chiffré**, juste base64. Toute donnée sensible (ex: mot de passe) y est lisible. **Un JWT signe et authentifie, il ne chiffre pas.**
+
+### OAuth vs OIDC vs JWT
+
+```
+   ┌─────────────────────────────────────────────────────┐
+   │                  JWT (format)                       │
+   │  Une chaîne signée portant des claims               │
+   └─────────────────────────────────────────────────────┘
+                            ▲
+                            │ utilisé comme transport par
+                            │
+   ┌───────────────────────┴───────────────────────────┐
+   │                                                   │
+   │  OAuth 2.0 (autorisation)    OIDC (auth + idp)    │
+   │  RFC 6749                    sur RFC 6749          │
+   │                                                   │
+   │  → access_token (opaque      → id_token (JWT)     │
+   │     ou JWT)                     + access_token    │
+   │  "accès à une ressource"     "identité du user"   │
+   └───────────────────────────────────────────────────┘
+```
+
+## 🎯 Objectif
+
+Monter une API REST Go avec :
+- Authentification JWT signée en **RS256** (asymétrique)
+- Vérification stricte (algorithme forcé, expiration, audience)
+- **Rotation de clés** via `kid` (key ID)
+- Endpoint protégé qui lit l'identité depuis le token
+
+## 📐 Architecture cible
+
+```
+   ┌─────────┐   POST /login    ┌──────────────┐
+   │ Client  │ ───────────────► │  API Server  │
+   │         │ ◄─────────────── │              │
+   └─────────┘   { jwt: "..." } │   issuer     │
+        │                       │ (signe RS256)│
+        │                       └──────┬───────┘
+        │                              │ private key
+        │ GET /api/me                  │ (v1, v2)
+        │ Authorization: Bearer …      │
+        │                              │
+        ▼                       ┌──────▼───────┐
+   ┌──────────┐                 │  JWKS endpoint│
+   │   API    │ ◄────── fetch ──┤  /.well-known/│
+   │ verifier │   pub keys      │  jwks.json    │
+   └──────────┘                 └───────────────┘
+```
+
+## 📋 Étape 1 — Générer les paires de clés RSA
+
+```bash
+mkdir -p ./keys
+# Clé v1
+openssl genpkey -algorithm RSA -out keys/v1.pem -pkeyopt rsa_keygen_bits:2048
+openssl rsa -in keys/v1.pem -pubout -out keys/v1.pub
+
+# Clé v2 (pour démontrer la rotation plus tard)
+openssl genpkey -algorithm RSA -out keys/v2.pem -pkeyopt rsa_keygen_bits:2048
+openssl rsa -in keys/v2.pem -pubout -out keys/v2.pub
+```
+
+## 📋 Étape 2 — Issuer Go simple
+
+```go
+// issuer/main.go
+package main
+
+import (
+  "crypto/rsa"
+  "encoding/json"
+  "log"
+  "net/http"
+  "os"
+  "time"
+
+  "github.com/golang-jwt/jwt/v5"
+)
+
+var privKeys = map[string]*rsa.PrivateKey{}
+var activeKid = "v1"
+
+func loadKey(kid, path string) {
+  b, _ := os.ReadFile(path)
+  k, _ := jwt.ParseRSAPrivateKeyFromPEM(b)
+  privKeys[kid] = k
+}
+
+func login(w http.ResponseWriter, r *http.Request) {
+  // (simplifié) — en vrai on vérifie un login/password contre une DB
+  username := r.FormValue("user")
+  if username == "" { http.Error(w, "missing user", 400); return }
+
+  claims := jwt.MapClaims{
+    "sub":  username,
+    "role": "user",
+    "iss":  "https://api.homelab.lan",
+    "aud":  "homelab-api",
+    "iat":  time.Now().Unix(),
+    "exp":  time.Now().Add(15 * time.Minute).Unix(),
+  }
+  tok := jwt.NewWithClaims(jwt.SigningMethodRS256, claims)
+  tok.Header["kid"] = activeKid
+  signed, _ := tok.SignedString(privKeys[activeKid])
+  json.NewEncoder(w).Encode(map[string]string{"jwt": signed})
+}
+
+// JWKS : exposer les clés publiques pour les vérifieurs externes
+func jwks(w http.ResponseWriter, r *http.Request) {
+  // (simplifié : on devrait sérialiser correctement en RFC 7517)
+  keys := []map[string]any{}
+  for kid := range privKeys {
+    keys = append(keys, map[string]any{
+      "kid": kid, "kty": "RSA", "alg": "RS256", "use": "sig",
+      // n, e à extraire de la clé publique — omis ici pour la concision
+    })
+  }
+  json.NewEncoder(w).Encode(map[string]any{"keys": keys})
+}
+
+func main() {
+  loadKey("v1", "../keys/v1.pem")
+  loadKey("v2", "../keys/v2.pem")
+
+  http.HandleFunc("/login", login)
+  http.HandleFunc("/.well-known/jwks.json", jwks)
+  log.Fatal(http.ListenAndServe(":8081", nil))
+}
+```
+
+## 📋 Étape 3 — Serveur de ressource avec vérif stricte
+
+```go
+// api/main.go
+package main
+
+import (
+  "crypto/rsa"
+  "fmt"
+  "net/http"
+  "os"
+  "strings"
+
+  "github.com/golang-jwt/jwt/v5"
+)
+
+var pubKeys = map[string]*rsa.PublicKey{}
+
+func loadPub(kid, path string) {
+  b, _ := os.ReadFile(path)
+  k, _ := jwt.ParseRSAPublicKeyFromPEM(b)
+  pubKeys[kid] = k
+}
+
+// CRITIQUE : on force RS256 + on regarde kid pour choisir la clé
+func keyFunc(t *jwt.Token) (interface{}, error) {
+  if _, ok := t.Method.(*jwt.SigningMethodRSA); !ok {
+    return nil, fmt.Errorf("alg non autorisé: %s", t.Method.Alg())
+  }
+  kid, _ := t.Header["kid"].(string)
+  pk, ok := pubKeys[kid]
+  if !ok { return nil, fmt.Errorf("kid inconnu: %s", kid) }
+  return pk, nil
+}
+
+func authMiddleware(next http.HandlerFunc) http.HandlerFunc {
+  return func(w http.ResponseWriter, r *http.Request) {
+    h := r.Header.Get("Authorization")
+    if !strings.HasPrefix(h, "Bearer ") {
+      http.Error(w, "missing bearer", 401); return
+    }
+    raw := strings.TrimPrefix(h, "Bearer ")
+
+    tok, err := jwt.Parse(raw, keyFunc,
+      jwt.WithValidMethods([]string{"RS256"}),   // ← anti alg:none
+      jwt.WithIssuer("https://api.homelab.lan"),
+      jwt.WithAudience("homelab-api"),
+      jwt.WithExpirationRequired(),
+    )
+    if err != nil || !tok.Valid {
+      http.Error(w, "invalid token: "+err.Error(), 401); return
+    }
+    claims := tok.Claims.(jwt.MapClaims)
+    r.Header.Set("X-User", claims["sub"].(string))
+    next(w, r)
+  }
+}
+
+func me(w http.ResponseWriter, r *http.Request) {
+  fmt.Fprintf(w, "Hello, %s\n", r.Header.Get("X-User"))
+}
+
+func main() {
+  loadPub("v1", "../keys/v1.pub")
+  loadPub("v2", "../keys/v2.pub")
+
+  http.HandleFunc("/api/me", authMiddleware(me))
+  http.ListenAndServe(":8080", nil)
+}
+```
+
+## 📋 Étape 4 — Tester la chaîne
+
+```bash
+# Démarrer
+cd issuer && go run main.go &
+cd api && go run main.go &
+
+# Obtenir un token
+TOKEN=$(curl -s -X POST -d "user=kim" http://localhost:8081/login | jq -r .jwt)
+echo $TOKEN
+
+# Décoder (juste base64, pas crypto)
+echo $TOKEN | cut -d. -f2 | base64 -d 2>/dev/null | jq
+
+# Appeler l'API
+curl -H "Authorization: Bearer $TOKEN" http://localhost:8080/api/me
+# → Hello, kim
+```
+
+## 📋 Étape 5 — Tester les attaques classiques
+
+### Attaque 1 : alg=none
+
+```bash
+# Forger un token avec alg: none et claims falsifiés
+HEADER=$(echo -n '{"alg":"none","typ":"JWT"}' | base64 | tr -d '=' | tr '/+' '_-')
+PAYLOAD=$(echo -n '{"sub":"attacker","role":"admin","iss":"https://api.homelab.lan","aud":"homelab-api","exp":99999999999}' | base64 | tr -d '=' | tr '/+' '_-')
+FORGED="${HEADER}.${PAYLOAD}."
+
+curl -H "Authorization: Bearer $FORGED" http://localhost:8080/api/me
+# → 401 invalid token: alg non autorisé
+```
+
+✓ La vérif `jwt.WithValidMethods([]string{"RS256"})` bloque.
+
+### Attaque 2 : Token expiré
+
+```bash
+# Manuellement, prendre un vieux token...
+# → 401 invalid token: token is expired
+```
+
+### Attaque 3 : Mauvais audience
+
+```bash
+# Si on fait Ie token pour aud=different-api, on accepte ?
+# → 401 invalid token: token has invalid audience
+```
+
+## 📋 Étape 6 — Rotation des clés
+
+Activer v2 sans casser les tokens v1 en circulation :
+
+```go
+// Dans issuer/main.go, change activeKid = "v2"
+// Les nouveaux tokens sont signés par v2
+// L'API verifier connaît toujours v1 ET v2 → les anciens tokens restent valides
+// jusqu'à leur expiration naturelle (15 min)
+```
+
+Après expiration de tous les tokens v1, tu peux supprimer v1.pub côté API.
+
+## 🧠 Recap des protections en place
+
+```
+   Couche                    Protège contre
+   ─────────────────────     ────────────────────────────
+   alg whitelist             alg:none, downgrade HS256
+   kid → pub key             rotation, multi-issuer
+   Issuer/audience vérifiés  cross-application replay
+   Expiration obligatoire    token volé = limité dans temps
+   Signature asymétrique     vérifieur compromis ≠ forge
+```
+
+## ✅ Validation
+
+- /login retourne un JWT valide
+- /api/me renvoie le sub du token
+- Attaque alg:none → 401
+- Token expiré → 401
+- Mauvais aud → 401
+- Rotation v1→v2 sans coupure
+
+## 🚀 Suite
+
+➡️ **Lab #2 — Rate limiting et RBAC fin** : on ajoute du rate limiting par token et un système de rôles/permissions granulaire.

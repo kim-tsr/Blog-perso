@@ -1,0 +1,348 @@
+---
+title: "API #2 — Rate limiting et RBAC fin"
+slug: api-02-rate-limit-rbac
+objective: "Protéger l'API du lab #1 contre les abus avec un rate limiter token-bucket, et implémenter un RBAC granulaire à la PERM:RESOURCE."
+tag: Cybersécurité
+theme: cyan
+difficulty: intermédiaire
+duration: "55 min"
+minRole: pro
+series: api-securisee-from-zero
+seriesOrder: 2
+prerequisites:
+  - "Avoir terminé le Lab #1 (API JWT fonctionnelle)"
+  - "Notions de Redis (clé-valeur en mémoire)"
+tools:
+  - "Redis"
+  - "Go"
+  - "Casbin (optionnel)"
+quiz:
+  - question: "Pourquoi le pattern 'token bucket' est-il préféré à 'fixed window' pour le rate limiting ?"
+    options:
+      - "token bucket est plus rapide"
+      - "fixed window crée des burst aux frontières de fenêtre (ex: 100 req à 11:59:59 + 100 à 12:00:00 = 200 req en 2s) ; token bucket lisse le débit"
+      - "fixed window ne marche pas avec Redis"
+      - "token bucket consomme moins de RAM"
+    correct: 1
+    explanation: "Fixed window : compteur reset à chaque fenêtre. Bug classique : 200 req en 2 secondes aux frontières. Token bucket : refill continu (1 token toutes les X ms) → débit lissé. Sliding window est encore mieux mais plus complexe à implémenter."
+  - question: "Pourquoi limiter par 'token' (user identifié) plutôt que par IP ?"
+    options:
+      - "IP est obsolète"
+      - "Plusieurs users derrière le même NAT/proxy partagent l'IP — limiter par IP les pénalise tous. Limiter par token isole correctement"
+      - "Les IP sont fausses"
+      - "C'est plus rapide"
+    correct: 1
+    explanation: "Bureau d'entreprise : 500 users partagent une IP NAT publique. Limit IP=100req/min → tout l'étage est bloqué dès qu'un user surconsomme. Token = chaque user a son compteur indépendant. En complément on garde un limit IP très laxiste pour les non-auth."
+  - question: "Quelle différence entre RBAC et ABAC ?"
+    options:
+      - "RBAC est obsolète"
+      - "RBAC : permissions assignées à des rôles, users héritent. ABAC : permissions calculées dynamiquement depuis des attributs (user, ressource, contexte) — plus puissant mais plus complexe"
+      - "Ils sont identiques"
+      - "RBAC est pour les fichiers, ABAC pour les APIs"
+    correct: 1
+    explanation: "RBAC : User → Role → Permissions (statique). ABAC : Policy(user.dept == resource.dept) (dynamique). En vrai on combine : RBAC pour les grosses lignes, ABAC pour les règles fines (ownership, hours, location)."
+  - question: "Quelle convention de nommage est usuelle pour des permissions fines ?"
+    options:
+      - "verbe + ressource (ex: 'documents:read')"
+      - "uniquement le nom de la fonction"
+      - "le chemin URL"
+      - "un UUID aléatoire"
+    correct: 0
+    explanation: "Pattern 'action:resource' (ex: 'documents:read', 'users:write', 'admin:configure'). Lisible dans les logs, facile à matcher avec wildcards ('documents:*' pour tout sur documents), et largement supporté par les libs (Casbin, Oso)."
+  - question: "Quel est l'intérêt de stocker le compteur de rate limit dans Redis plutôt qu'en mémoire du process ?"
+    options:
+      - "Redis est plus rapide"
+      - "L'API tourne en N replicas — un compteur en mémoire local autorise N × limit. Redis centralise le compteur"
+      - "Redis chiffre le compteur"
+      - "C'est obligatoire"
+    correct: 1
+    explanation: "En production, 3 replicas API = 3 compteurs indépendants → un user fait 100×3=300 req au lieu de 100. Redis (ou Memcached) centralise. Pour de très gros volumes : sharder par hash du token."
+---
+
+> 📚 **Série « API sécurisée from zero »** — Lab 2 / 4. Reprend l'API du Lab #1 et ajoute les défenses contre l'abus.
+
+## 🧠 Théorie : 3 algorithmes de rate limiting
+
+### Fixed window (le piège classique)
+
+```
+   Compteur reset à chaque minute (00:00, 00:01, 00:02...)
+
+   Time    │  Req
+   ────────┼─────
+   23:59:55│ ▓
+   23:59:56│ ▓▓
+   23:59:57│ ▓▓▓
+   23:59:58│ ▓▓▓▓
+   23:59:59│ ▓▓▓▓▓▓▓▓▓▓ (10 req, max atteint)
+   00:00:00│ ▓▓▓▓▓▓▓▓▓▓ (reset — 10 req à nouveau)
+                ↑
+           20 req en 1 seconde — burst non détecté
+```
+
+### Token bucket (recommandé)
+
+```
+   Bucket de capacité 10, refill 1 token / 6 secondes
+
+   ┌──────────────┐
+   │ ●●●●●●●●●●   │  ← capacité 10
+   │              │
+   └──────────────┘
+   chaque requête │
+   consomme 1 token
+
+   Si bucket vide → 429 Too Many Requests
+   Tokens reviennent en continu
+```
+
+### Sliding window log (le plus précis)
+
+```
+   Pour chaque requête : on stocke le timestamp.
+   À chaque nouvelle req : on compte les timestamps dans la fenêtre.
+
+   Précis mais coûteux en mémoire pour les gros volumes.
+```
+
+## 🎯 Objectif
+
+À la fin tu auras :
+- Un **rate limiter token bucket** stocké dans Redis, partagé entre toutes les replicas
+- Un système **RBAC** avec rôles `viewer`, `editor`, `admin` et permissions `action:ressource`
+- Des **middlewares chaînables** sur les routes protégées
+- Des tests qui vérifient blocage et autorisation
+
+## 📐 Architecture
+
+```
+   Client ───► Authorization: Bearer <jwt>
+                          │
+                          ▼
+   ┌─────────────────────────────────────────┐
+   │             API Server                  │
+   │                                         │
+   │  Middleware chain:                      │
+   │    [auth]   ► [rate-limit]   ► [rbac]   │
+   │       │           │                 │   │
+   │       ▼           ▼                 ▼   │
+   │   JWT verify   Redis            Casbin /│
+   │   (lab #1)     INCR + TTL       table   │
+   └─────────────────────────────────────────┘
+                          │
+                          ▼
+                     Handler métier
+```
+
+## 📋 Étape 1 — Rate limiter Go + Redis
+
+```go
+// middleware/ratelimit.go
+package middleware
+
+import (
+  "fmt"
+  "net/http"
+  "time"
+
+  "github.com/redis/go-redis/v9"
+)
+
+type Limiter struct {
+  rdb       *redis.Client
+  capacity  int     // tokens dans le bucket
+  refillSec float64 // 1 token toutes les X secondes
+}
+
+func NewLimiter(rdb *redis.Client, capacity int, refillSec float64) *Limiter {
+  return &Limiter{rdb, capacity, refillSec}
+}
+
+// algo : on stocke (tokens, last_refill_unix_ms)
+// À chaque hit : on recalcule combien de tokens ont été refillés depuis last_refill
+const luaScript = `
+local key = KEYS[1]
+local capacity = tonumber(ARGV[1])
+local refill_sec = tonumber(ARGV[2])
+local now = tonumber(ARGV[3])
+
+local data = redis.call('HMGET', key, 'tokens', 'ts')
+local tokens = tonumber(data[1]) or capacity
+local ts = tonumber(data[2]) or now
+
+local elapsed = (now - ts) / 1000.0
+local refill = elapsed / refill_sec
+tokens = math.min(capacity, tokens + refill)
+
+if tokens < 1 then
+  redis.call('HMSET', key, 'tokens', tokens, 'ts', now)
+  redis.call('EXPIRE', key, math.ceil(capacity * refill_sec))
+  return 0
+end
+
+tokens = tokens - 1
+redis.call('HMSET', key, 'tokens', tokens, 'ts', now)
+redis.call('EXPIRE', key, math.ceil(capacity * refill_sec))
+return 1
+`
+
+func (l *Limiter) Allow(key string) bool {
+  now := time.Now().UnixMilli()
+  res, err := l.rdb.Eval(ctx, luaScript, []string{key},
+    l.capacity, l.refillSec, now).Int()
+  if err != nil { return false }
+  return res == 1
+}
+
+func (l *Limiter) Middleware(next http.HandlerFunc) http.HandlerFunc {
+  return func(w http.ResponseWriter, r *http.Request) {
+    user := r.Header.Get("X-User")        // posé par auth middleware
+    if user == "" {
+      http.Error(w, "no user", 401); return
+    }
+    key := fmt.Sprintf("rl:%s", user)
+    if !l.Allow(key) {
+      w.Header().Set("Retry-After", "60")
+      http.Error(w, "rate limited", 429); return
+    }
+    next(w, r)
+  }
+}
+```
+
+> 💡 **Pourquoi un script Lua ?** Sans, on aurait 2 round-trips Redis et une race condition entre lecture et écriture. Lua = atomique côté Redis.
+
+## 📋 Étape 2 — RBAC avec table de permissions
+
+Modèle simple :
+
+```go
+// rbac/rbac.go
+package rbac
+
+type Role string
+const (
+  Viewer Role = "viewer"
+  Editor Role = "editor"
+  Admin  Role = "admin"
+)
+
+// Map déclarative — production : DB ou Casbin policy
+var perms = map[Role]map[string]bool{
+  Viewer: {"documents:read": true},
+  Editor: {"documents:read": true, "documents:write": true},
+  Admin:  {"*": true}, // wildcard
+}
+
+func Can(role Role, action string) bool {
+  if perms[role]["*"] { return true }
+  return perms[role][action]
+}
+```
+
+Middleware :
+
+```go
+func RequirePerm(action string) func(http.HandlerFunc) http.HandlerFunc {
+  return func(next http.HandlerFunc) http.HandlerFunc {
+    return func(w http.ResponseWriter, r *http.Request) {
+      role := rbac.Role(r.Header.Get("X-Role"))
+      if !rbac.Can(role, action) {
+        http.Error(w, "forbidden: requires "+action, 403); return
+      }
+      next(w, r)
+    }
+  }
+}
+```
+
+L'`auth middleware` du lab #1 doit poser `X-Role` depuis le claim `role` du JWT.
+
+## 📋 Étape 3 — Chaîner les middlewares
+
+```go
+func main() {
+  rdb := redis.NewClient(&redis.Options{Addr: "localhost:6379"})
+  limit := middleware.NewLimiter(rdb, 10, 6.0) // 10 tokens, 1 / 6s
+
+  // viewers ont accès en lecture
+  http.HandleFunc("/api/docs",
+    middleware.Auth(
+      limit.Middleware(
+        middleware.RequirePerm("documents:read")(listDocs))))
+
+  // editors+ ont accès en écriture
+  http.HandleFunc("/api/docs/create",
+    middleware.Auth(
+      limit.Middleware(
+        middleware.RequirePerm("documents:write")(createDoc))))
+
+  http.ListenAndServe(":8080", nil)
+}
+```
+
+## 📋 Étape 4 — Tester
+
+```bash
+# Démarrer Redis
+docker run -d --name api-redis -p 6379:6379 redis:7-alpine
+
+# Token viewer
+TOKEN=$(curl -s -X POST -d "user=alice&role=viewer" http://localhost:8081/login | jq -r .jwt)
+
+# Lecture OK
+curl -s -H "Authorization: Bearer $TOKEN" http://localhost:8080/api/docs
+
+# Écriture refusée
+curl -s -H "Authorization: Bearer $TOKEN" \
+     -X POST http://localhost:8080/api/docs/create
+# → forbidden: requires documents:write
+
+# Rate limit : 15 reqs rapides
+for i in {1..15}; do
+  curl -s -o /dev/null -w "%{http_code}\n" \
+    -H "Authorization: Bearer $TOKEN" http://localhost:8080/api/docs
+done
+# → 200 × 10, puis 429 × 5
+```
+
+## 🧠 Patterns avancés (pour aller plus loin)
+
+### Tiered limits par rôle
+
+```
+   Viewer  : 100 req/min   (bucket 100, refill 1/0.6s)
+   Editor  : 500 req/min   (bucket 500, refill 1/0.12s)
+   Admin   : illimité      (skip middleware)
+```
+
+### ABAC en complément (ownership)
+
+```go
+// Editor peut update SES documents
+if action == "documents:update" && resource.Owner != user.ID {
+  return false
+}
+```
+
+### Distributed denial : circuit breaker
+
+Si 50% des requests retournent 5xx en 1 min → couper le backend en amont.
+
+## 🔬 Snapshot post-lab
+
+```bash
+git tag api-after-lab2
+git push --tags
+```
+
+## ✅ Validation
+
+- Lectures viewer OK
+- Écriture viewer → 403
+- 11ème requête en 6s → 429
+- Le compteur Redis (`redis-cli HGETALL rl:alice`) montre tokens et ts
+
+## 🚀 Suite
+
+➡️ **Lab #3 — Audit logging et observabilité sécurité** : on logge structurellement chaque appel auth/RBAC et on les ingère dans Loki pour la chasse aux anomalies.

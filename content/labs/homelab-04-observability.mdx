@@ -1,0 +1,277 @@
+---
+title: "Homelab #4 — Observabilité : Prometheus, Loki, Grafana"
+slug: homelab-04-observability
+objective: "Déployer la trilogie metrics/logs/traces via ArgoCD, instrumenter l'app whoami et créer un dashboard Grafana sur les latences."
+tag: Infrastructure
+theme: violet
+difficulty: avancé
+duration: "55 min"
+minRole: pro
+series: homelab-from-zero
+seriesOrder: 4
+prerequisites:
+  - "Avoir terminé les Labs #1, #2 et #3"
+  - "ArgoCD opérationnel et capable de pull depuis ton dépôt"
+  - "Notions de PromQL utiles mais pas obligatoires"
+tools:
+  - "kube-prometheus-stack"
+  - "Loki"
+  - "Promtail"
+  - "Grafana"
+quiz:
+  - question: "Quelle est la différence entre Prometheus (metrics) et Loki (logs) dans leur modèle d'indexation ?"
+    options:
+      - "Prometheus indexe le contenu, Loki indexe les timestamps"
+      - "Prometheus indexe par labels sur des time-series numériques ; Loki n'indexe QUE les labels, pas le contenu des logs"
+      - "Prometheus est SQL-based, Loki est NoSQL"
+      - "Les deux fonctionnent de la même façon"
+    correct: 1
+    explanation: "Loki est inspiré de Prometheus pour les logs : il indexe uniquement les labels (app, namespace, pod) — pas le texte. Conséquence : stockage 10× moins cher qu'ELK, mais on filtre par labels puis grep dans le texte. Modèle parfait pour Kubernetes."
+  - question: "Pourquoi définir des requests/limits CPU et RAM est crucial ?"
+    options:
+      - "Pour économiser de l'électricité"
+      - "Sans requests, le scheduler ne peut pas placer les pods ; sans limits, un pod peut consommer toute la node et tuer les autres par OOM"
+      - "C'est obligatoire pour Prometheus"
+      - "Pour le branding"
+    correct: 1
+    explanation: "Requests = ressource garantie utilisée par le scheduler. Limits = plafond imposé par cgroups. Sans ces deux, tu déploies à l'aveugle. Un pod peut bouffer 100% CPU d'une node et faire chuter ton API server."
+  - question: "Que représente 'rate(...)[1m]' dans une requête PromQL ?"
+    options:
+      - "La valeur moyenne sur 1 minute"
+      - "La pente moyenne par seconde calculée sur une fenêtre glissante de 1 minute"
+      - "Le nombre total d'événements dans la dernière minute"
+      - "La probabilité d'un événement"
+    correct: 1
+    explanation: "rate() calcule un taux par seconde lissé sur l'intervalle. Pour un counter qui passe de 100 à 700 en 1 min, rate()[1m] retourne 10/s. La fonction la plus utilisée — toujours sur des counters."
+  - question: "Pourquoi Alertmanager + labels est plus puissant qu'une simple alerte email ?"
+    options:
+      - "Alertmanager est plus rapide"
+      - "Les labels (severity, team, env) permettent de router vers Slack/PagerDuty/email selon le contexte, et de grouper/dédupliquer les alertes"
+      - "Alertmanager chiffre les emails"
+      - "C'est obligatoire pour Prometheus"
+    correct: 1
+    explanation: "Alertmanager + labels = SRE-grade routing. Severity=critical → PagerDuty. Severity=warning → Slack. Maintenance → silence. Dédup → 100 pods en échec = 1 notif. Sans Alertmanager, tu te noies sous le bruit."
+---
+
+> 📚 **Série « Homelab from zero »** — Lab 4 / 5. On déploie tout via le dépôt Git du Lab #3 — pas un seul `kubectl apply` manuel.
+
+## 🧠 Théorie : les 3 piliers de l'observabilité
+
+```
+   ┌─────────────────────────────────────────────────────┐
+   │              Application instrumentée               │
+   └──┬──────────────┬──────────────┬───────────────────┘
+      │              │              │
+      ▼              ▼              ▼
+   ┌──────┐      ┌──────┐      ┌──────┐
+   │Metrics│      │ Logs │      │Traces│
+   │      │      │      │      │      │
+   │ NUM  │      │ TXT  │      │ FLOW │
+   │ /sec │      │ events│     │ E2E  │
+   └──┬───┘      └──┬───┘      └──┬───┘
+      ▼             ▼             ▼
+   ┌──────┐      ┌──────┐      ┌──────┐
+   │Prom. │      │ Loki │      │Tempo │
+   │ TSDB │      │ chunks│     │trace │
+   └──┬───┘      └──┬───┘      └──┬───┘
+      └──────────┬──┴─────────────┘
+                 ▼
+            ┌─────────┐
+            │ Grafana │   ← UI unifiée
+            └─────────┘
+```
+
+**Quand utiliser quoi :**
+- **Metrics** → "combien" et "à quel taux" (latence p99, erreurs/s, CPU)
+- **Logs** → "que s'est-il passé exactement" (stack trace, request id, payload)
+- **Traces** → "où ça bloque dans la chaîne" (request → 5 services → DB)
+
+## 🎯 Objectif
+
+Avoir une vraie observabilité prod-like sur le homelab. À la fin :
+- **kube-prometheus-stack** déployé (Prometheus + Alertmanager + Grafana)
+- **Loki + Promtail** pour les logs
+- Dashboard Grafana custom sur les **latences whoami**
+- Une alerte qui se déclenche si whoami devient indisponible
+
+## 📋 Étape 1 — Ajouter le stack dans le dépôt Git
+
+Dans ton dépôt `homelab-gitops/`, ajoute :
+
+```
+infra/
+├── monitoring/
+│   ├── namespace.yaml
+│   ├── kube-prometheus-stack.yaml   # Application ArgoCD pointant sur Helm chart
+│   └── loki-stack.yaml
+```
+
+`kube-prometheus-stack.yaml` (Application ArgoCD type Helm) :
+
+```yaml
+apiVersion: argoproj.io/v1alpha1
+kind: Application
+metadata:
+  name: kube-prometheus-stack
+  namespace: argocd
+spec:
+  project: default
+  source:
+    repoURL: https://prometheus-community.github.io/helm-charts
+    chart: kube-prometheus-stack
+    targetRevision: 65.5.0
+    helm:
+      values: |
+        grafana:
+          adminPassword: changeme
+          service:
+            type: NodePort
+            nodePort: 30080
+        prometheus:
+          prometheusSpec:
+            retention: 7d
+            storageSpec:
+              volumeClaimTemplate:
+                spec:
+                  resources:
+                    requests:
+                      storage: 10Gi
+  destination:
+    server: https://kubernetes.default.svc
+    namespace: monitoring
+  syncPolicy:
+    automated: { prune: true, selfHeal: true }
+    syncOptions: [ CreateNamespace=true ]
+```
+
+Commit + push. ArgoCD détecte la nouvelle app sous 30 sec.
+
+## 📋 Étape 2 — Vérifier le déploiement
+
+```bash
+kubectl -n monitoring get pods
+# Tous les pods doivent être Running
+```
+
+Grafana est exposé sur le NodePort `30080`. Ouvre http://192.168.1.20:30080 (login `admin` / `changeme`).
+
+## 📋 Étape 3 — Ajouter Loki + Promtail
+
+`loki-stack.yaml` :
+
+```yaml
+apiVersion: argoproj.io/v1alpha1
+kind: Application
+metadata:
+  name: loki-stack
+  namespace: argocd
+spec:
+  project: default
+  source:
+    repoURL: https://grafana.github.io/helm-charts
+    chart: loki-stack
+    targetRevision: 2.10.2
+    helm:
+      values: |
+        loki:
+          enabled: true
+        promtail:
+          enabled: true
+        grafana:
+          enabled: false  # on a déjà la nôtre
+  destination:
+    server: https://kubernetes.default.svc
+    namespace: monitoring
+  syncPolicy:
+    automated: { prune: true, selfHeal: true }
+```
+
+Commit + push.
+
+Dans Grafana → **Connections → Add data source → Loki** → URL `http://loki:3100` → Save & Test.
+
+## 📋 Étape 4 — Instrumenter whoami
+
+Le projet `traefik/whoami` n'expose pas de métriques. Pour ce lab, on monitore depuis le **niveau réseau** via Cilium (déjà installé au Lab #2) :
+
+```yaml
+# Dans homelab-gitops/apps/whoami/
+# Ajoute ServiceMonitor pour ServiceMesh metrics
+apiVersion: monitoring.coreos.com/v1
+kind: ServiceMonitor
+metadata:
+  name: cilium-agent
+  namespace: monitoring
+spec:
+  selector:
+    matchLabels:
+      k8s-app: cilium
+  namespaceSelector:
+    matchNames: [ kube-system ]
+  endpoints:
+    - port: prometheus
+      interval: 30s
+```
+
+## 📋 Étape 5 — Dashboard custom
+
+Dans Grafana → **Dashboards → New → Import → JSON** :
+
+```json
+{
+  "title": "Whoami — Homelab",
+  "panels": [
+    {
+      "type": "stat",
+      "title": "Replicas",
+      "targets": [{
+        "expr": "kube_deployment_status_replicas{deployment=\"whoami\",namespace=\"demo\"}"
+      }]
+    },
+    {
+      "type": "timeseries",
+      "title": "Réseau in/out (bytes/s)",
+      "targets": [{
+        "expr": "sum(rate(cilium_forward_bytes_total{}[1m]))"
+      }]
+    }
+  ]
+}
+```
+
+(simplifié — adapte selon les labels réellement remontés par Cilium).
+
+## 📋 Étape 6 — Première alerte
+
+Crée une **PrometheusRule** qui alerte si whoami a moins d'1 replica disponible :
+
+```yaml
+apiVersion: monitoring.coreos.com/v1
+kind: PrometheusRule
+metadata:
+  name: whoami-availability
+  namespace: monitoring
+spec:
+  groups:
+    - name: whoami
+      rules:
+        - alert: WhoamiDown
+          expr: kube_deployment_status_replicas_available{deployment="whoami"} < 1
+          for: 1m
+          labels: { severity: critical }
+          annotations:
+            summary: "whoami n'a aucune replica dispo"
+```
+
+Test : `kubectl scale -n demo deploy whoami --replicas=0` → après 1 min, l'alerte passe firing dans Alertmanager.
+
+## ✅ Validation
+
+- Pods monitoring tous Running, déployés par ArgoCD
+- Grafana accessible avec datasources Prometheus + Loki
+- Dashboard whoami affiche les compteurs
+- L'alerte WhoamiDown se déclenche quand on scale à 0
+
+## 🚀 Suite
+
+➡️ **Lab #5 — Sécurité runtime avec Falco et Cilium NetworkPolicies** : on durcit tout le homelab avec une détection runtime et une politique zero-trust sur les pods.
