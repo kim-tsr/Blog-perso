@@ -5,6 +5,13 @@ import { getCurrentProfile } from '@/lib/auth'
 import { signOut } from '../auth/actions'
 import Footer from '@/components/Footer'
 import RedeemForm from './RedeemForm'
+import ProgressSection from './ProgressSection'
+import AchievementsSection from './AchievementsSection'
+import BookmarksSection from './BookmarksSection'
+import { getUserProgress } from '@/lib/progress'
+import { getUserBookmarks } from '@/lib/bookmarks'
+import { getAllArticleMeta } from '@/lib/articles'
+import { getAllLabMeta } from '@/lib/labs'
 
 export const metadata: Metadata = {
   title: 'Mon compte — dev.sec.ops',
@@ -21,6 +28,13 @@ export default async function AccountPage() {
   if (!profile) redirect('/auth/signin?next=/account')
 
   const role = ROLE_LABEL[profile.role]
+
+  const [progress, allArticles, allLabs, bookmarks] = await Promise.all([
+    getUserProgress(),
+    getAllArticleMeta(),
+    getAllLabMeta(),
+    getUserBookmarks(),
+  ])
 
   return (
     <>
@@ -76,6 +90,12 @@ export default async function AccountPage() {
             </div>
             <div className="ac-role-detail">{role.detail}</div>
           </div>
+
+          {progress && <ProgressSection progress={progress} allArticles={allArticles} allLabs={allLabs} />}
+
+          {progress && <AchievementsSection progress={progress} allArticles={allArticles} allLabs={allLabs} />}
+
+          <BookmarksSection bookmarks={bookmarks} allArticles={allArticles} allLabs={allLabs} />
 
           <RedeemForm />
 

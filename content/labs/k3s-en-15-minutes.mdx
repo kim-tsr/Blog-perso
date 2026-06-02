@@ -1,11 +1,11 @@
 ---
 title: "Déployer un cluster k3s en 15 minutes"
 slug: k3s-en-15-minutes
-objective: "Monter un cluster Kubernetes léger fonctionnel, déployer une application, exposer un service via Traefik."
+objective: "Comprendre l'architecture de Kubernetes, monter un cluster k3s léger fonctionnel, déployer une application et l'exposer via Traefik."
 tag: Infrastructure
 theme: violet
 difficulty: débutant
-duration: "15 min"
+duration: "25 min"
 prerequisites:
   - "1 VM Linux (ou Raspberry Pi) avec accès root"
   - "Connaissance basique de la ligne de commande"
@@ -13,7 +13,112 @@ tools:
   - "k3s"
   - "kubectl"
   - "Helm"
+quiz:
+  - question: "Quelle est la différence fondamentale entre k3s et Kubernetes upstream ?"
+    options:
+      - "k3s est moins sécurisé"
+      - "k3s est un binaire unique (~70 MB), remplace etcd par SQLite par défaut, et bundle Traefik/ServiceLB/local-path-provisioner — pour edge / IoT / dev. K8s vanilla = plusieurs binaires, etcd obligatoire, ~1 GB"
+      - "k3s ne supporte pas les Deployments"
+      - "Ils sont identiques"
+    correct: 1
+    explanation: "k3s (Rancher/SUSE, CNCF Sandbox) cible les environnements contraints. Toujours certifié CNCF (passe les conformance tests). Pour < 100 nodes, k3s est largement suffisant. À grande échelle on revient à k8s vanilla ou managed (EKS/GKE/AKS)."
+  - question: "Quel composant Kubernetes est le 'cerveau' qui décide où placer les pods ?"
+    options:
+      - "kubelet"
+      - "kube-scheduler — il observe les pods sans node assigné et choisit le meilleur node selon les ressources demandées, anti-affinity, taints/tolerations"
+      - "etcd"
+      - "kube-proxy"
+    correct: 1
+    explanation: "kube-scheduler = matchmaker. Phase 1 'Filtering' (nodes qui peuvent) → Phase 2 'Scoring' (lequel est le meilleur). kubelet exécute. etcd stocke. kube-proxy fait le réseau. Quatre composants distincts du control plane, chacun avec un rôle clair."
+  - question: "Pourquoi 'Service' et 'Pod' ne sont-ils PAS la même chose ?"
+    options:
+      - "Service est juste un alias"
+      - "Pod = instance éphémère qui change d'IP à chaque restart. Service = abstraction stable (ClusterIP fixe, DNS interne) qui load-balance vers les Pods matchant un selector"
+      - "Un Service contient les Pods"
+      - "Ils font la même chose"
+    correct: 1
+    explanation: "Couplage faible : votre app appelle 'http://api:8080' (Service DNS) et ne sait pas que c'est 3 pods éphémères derrière. Quand un pod meurt et qu'un autre prend sa place avec une nouvelle IP, le Service le voit via les labels → continuité de service."
+  - question: "À quoi sert un 'Ingress' que ne fait pas déjà un Service de type LoadBalancer ?"
+    options:
+      - "Rien, c'est redondant"
+      - "L7 (HTTP) routing + TLS + N services derrière 1 IP : 'app1.dom.com → service1, app2.dom.com → service2'. LoadBalancer est L4 (TCP) — 1 IP = 1 service"
+      - "Ingress est obligatoire"
+      - "LoadBalancer ne supporte pas TLS"
+    correct: 1
+    explanation: "LoadBalancer (L4) coûte une IP publique par Service. Ingress = reverse proxy mutualisé : 1 IP publique → N services différenciés par hostname/path. TLS termination centralisée (cert-manager + Let's Encrypt automatique). k3s embarque Traefik comme Ingress Controller."
+  - question: "Pourquoi 'CrashLoopBackOff' est-il un statut qu'on voit souvent ?"
+    options:
+      - "Bug k8s"
+      - "Le pod crash après start, kubelet le redémarre, il recrash → backoff exponentiel (10s, 20s, 40s...) pour ne pas saturer le node. Causes : config foireuse, dépendance manquante, OOMKilled"
+      - "Manque de RAM cluster"
+      - "Image trop grosse"
+    correct: 1
+    explanation: "CrashLoopBackOff = symptôme, pas la cause. Diag : `kubectl describe pod` (events) + `kubectl logs --previous` (logs du crash précédent). Causes top : env var manquante (12factor), DB pas joignable, OOM (limits trop basses), liveness probe trop agressive."
 ---
+
+## 🧠 Théorie : l'architecture de Kubernetes en 1 schéma
+
+```
+   ┌─────────────────────────────────────────────────────────┐
+   │                  CONTROL PLANE                          │
+   │                                                          │
+   │   ┌─────────────┐  ┌──────────────┐  ┌──────────────┐   │
+   │   │ kube-       │  │ kube-        │  │ kube-        │   │
+   │   │ apiserver   │  │ scheduler    │  │ controller   │   │
+   │   │ (REST API)  │  │ (placement)  │  │ -manager     │   │
+   │   └──────┬──────┘  └──────┬───────┘  └──────┬───────┘   │
+   │          │                │                 │           │
+   │          └────────────────┼─────────────────┘           │
+   │                           ▼                              │
+   │                    ┌────────────┐                        │
+   │                    │   etcd     │ (state store)          │
+   │                    └────────────┘                        │
+   └─────────────────────────────────────────────────────────┘
+                              ▲
+                              │ API
+                              ▼
+   ┌─────────────────────────────────────────────────────────┐
+   │                   WORKER NODES                           │
+   │                                                          │
+   │   ┌──────────────┐   ┌──────────────┐                   │
+   │   │   kubelet    │   │  kube-proxy  │  (par node)       │
+   │   │  (run pods)  │   │  (network)   │                   │
+   │   └──────┬───────┘   └──────┬───────┘                   │
+   │          ▼                  ▼                            │
+   │     ┌────────────────────────────┐                       │
+   │     │ Container runtime          │                       │
+   │     │ (containerd / CRI-O)       │                       │
+   │     └────────────────────────────┘                       │
+   │              ┌─────┐  ┌─────┐                           │
+   │              │ Pod │  │ Pod │  (workloads)              │
+   │              └─────┘  └─────┘                           │
+   └─────────────────────────────────────────────────────────┘
+```
+
+### k3s vs k8s vanilla
+
+| Aspect | k3s | k8s vanilla |
+|---|---|---|
+| Binaire | 1 (~70 MB) | ~7 binaires (~1 GB) |
+| Store par défaut | SQLite | etcd (HA cluster) |
+| Ingress | Traefik bundled | None (à installer) |
+| LoadBalancer | ServiceLB (Klipper) | None (cloud-controller-manager) |
+| Storage | local-path bundled | None (CSI à installer) |
+| Cas d'usage | edge, IoT, dev, < 100 nodes | prod massif, multi-AZ |
+| Certifié CNCF | ✓ | ✓ |
+
+### Objets Kubernetes essentiels
+
+```
+   Pod          → unité minimum (1+ containers partageant network/storage)
+   Deployment   → gère les replicas + rolling update + rollback
+   Service      → IP virtuelle stable + DNS + load balance vers Pods
+   Ingress      → reverse proxy L7 (HTTP host/path → Service)
+   ConfigMap    → config non-sensible (env vars, fichiers)
+   Secret       → config sensible (base64, idéalement avec encryption-at-rest)
+   PVC          → demande de stockage persistant
+   Namespace    → isolation logique (RBAC, quotas)
+```
 
 ## 🎯 Objectif
 
@@ -36,6 +141,19 @@ export KUBECONFIG=/etc/rancher/k3s/k3s.yaml
 kubectl get nodes
 ```
 
+### Que vient-il de se passer ?
+
+```
+   curl sh ──► installe binaire k3s
+            ──► systemd service k3s.service
+            ──► démarre control plane + kubelet sur le même node
+            ──► génère kubeconfig
+            ──► démarre containerd embarqué
+            ──► déploie Traefik, ServiceLB, CoreDNS, metrics-server
+```
+
+En 30 secondes, tu as un cluster fonctionnel.
+
 ## 📋 Étape 2 — Déployer une application
 
 Créons un déploiement simple :
@@ -49,6 +167,27 @@ Vérifiez :
 
 ```bash
 kubectl get pods,svc -l app=whoami
+```
+
+### Anatomie de ce qui s'est passé
+
+```
+   kubectl create deployment
+        │
+        ▼
+   POST apiserver: Deployment whoami
+        │
+        ▼
+   controller-manager crée 1 ReplicaSet
+        │
+        ▼
+   ReplicaSet crée 1 Pod (spec template)
+        │
+        ▼
+   scheduler choisit un node
+        │
+        ▼
+   kubelet pull l'image + démarre le container via containerd
 ```
 
 ## 📋 Étape 3 — Exposer via Ingress
@@ -80,12 +219,69 @@ echo "$(hostname -I | awk '{print $1}') whoami.local" | sudo tee -a /etc/hosts
 curl http://whoami.local
 ```
 
+### Chemin d'une requête
+
+```
+   curl whoami.local
+        │
+        ▼ DNS local (/etc/hosts)
+   IP du node:80
+        │
+        ▼ kube-proxy / iptables
+   Traefik Pod (Ingress Controller)
+        │
+        ▼ règle Ingress
+   Service whoami (ClusterIP)
+        │
+        ▼ load balance
+   Pod whoami (cible)
+```
+
+## 📋 Étape 4 — Debug courant
+
+```bash
+# Voir les events récents
+kubectl get events --sort-by=.lastTimestamp
+
+# Inspecter un pod
+kubectl describe pod whoami-xxxxx
+
+# Voir les logs
+kubectl logs whoami-xxxxx
+
+# Logs du crash précédent
+kubectl logs whoami-xxxxx --previous
+
+# Entrer dans le pod
+kubectl exec -it whoami-xxxxx -- sh
+```
+
+## 🧠 Pitfalls courants
+
+❌ **kubeconfig avec mauvais droits** : `sudo chmod 644 /etc/rancher/k3s/k3s.yaml` (ou KUBECONFIG perso).
+❌ **CrashLoopBackOff sans regarder les logs** : 90% du temps, c'est une env var ou un secret manquant.
+❌ **Service sans matching labels** : `kubectl describe svc` montre 0 endpoint = selector ne match aucun pod.
+❌ **Pas de resource limits** : un pod gourmand peut OOM le node.
+❌ **Exposer Traefik directement sur port 80 sans TLS** : ok en lab, jamais en prod.
+
 ## ✅ Validation
 
 Vous devez voir le hostname du pod et des en-têtes HTTP. Bravo — vous avez un cluster K8s, un déploiement, un service et un ingress fonctionnels.
+
+```bash
+$ curl http://whoami.local
+Hostname: whoami-5f5c6c9b89-abcde
+IP: 10.42.0.5
+RemoteAddr: 10.42.0.4:55834
+GET / HTTP/1.1
+Host: whoami.local
+...
+```
 
 ## 🚀 Pour aller plus loin
 
 - Ajoutez **MetalLB** pour un vrai LoadBalancer
 - Activez **k3s server --tls-san** pour exposer l'API au-delà du localhost
 - Passez à un cluster multi-node avec `k3s agent --server https://<master>:6443`
+- Installez **cert-manager** + Let's Encrypt pour le TLS auto
+- Branchez **ArgoCD** (voir le lab dédié) pour la suite GitOps

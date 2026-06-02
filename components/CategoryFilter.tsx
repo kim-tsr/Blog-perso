@@ -25,7 +25,9 @@ const TAG_MAP: Record<string, string> = {
 
 const parseRead = (s: string) => parseInt(s, 10) || 0
 
-export default function CategoryFilter({ allArticles }: { allArticles: ArticleMeta[] }) {
+type UserRole = 'free' | 'pro' | 'admin'
+
+export default function CategoryFilter({ allArticles, userRole }: { allArticles: ArticleMeta[]; userRole?: UserRole | null }) {
   const [active, setActive] = useState('all')
   const [query, setQuery] = useState('')
   const [sort, setSort] = useState('recent')
@@ -146,7 +148,7 @@ export default function CategoryFilter({ allArticles }: { allArticles: ArticleMe
           <div className="cf-empty-sub">Essayez un autre terme ou changez de catégorie.</div>
         </div>
       ) : (
-        <ArticlesGrid articles={filtered} hideMeta />
+        <ArticlesGrid articles={filtered} hideMeta userRole={userRole} />
       )}
     </>
   )

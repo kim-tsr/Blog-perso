@@ -1,5 +1,6 @@
 import { Metadata } from 'next'
 import { getAllArticleMeta } from '@/lib/articles'
+import { getCurrentProfile } from '@/lib/auth'
 import CategoryFilter from '@/components/CategoryFilter'
 import Footer from '@/components/Footer'
 
@@ -8,8 +9,11 @@ export const metadata: Metadata = {
   description: 'Tutoriels techniques sur l\'infrastructure, la cybersécurité et le réseau.',
 }
 
-export default function BlogPage() {
-  const articles = getAllArticleMeta()
+export default async function BlogPage() {
+  const [articles, profile] = await Promise.all([
+    getAllArticleMeta(),
+    getCurrentProfile(),
+  ])
 
   return (
     <>
@@ -35,7 +39,7 @@ export default function BlogPage() {
 
         <section className="section" style={{ background: 'var(--bg)' }}>
           <div className="container">
-            <CategoryFilter allArticles={articles} />
+            <CategoryFilter allArticles={articles} userRole={profile?.role ?? null} />
           </div>
         </section>
       </main>

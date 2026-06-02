@@ -2,21 +2,51 @@ import { getAllLabs, getLabBySlug } from '@/lib/labs'
 import { getThemeClasses } from '@/lib/theme'
 import { notFound } from 'next/navigation'
 import { MDXRemote } from 'next-mdx-remote/rsc'
+import { mdxComponents } from '@/components/mdxComponents'
 import Link from 'next/link'
 import ReadingProgress from '@/components/ReadingProgress'
+import TableOfContents from '@/components/TableOfContents'
+import BookmarkButton from '@/components/BookmarkButton'
 import Footer from '@/components/Footer'
 import Paywall from '@/components/Paywall'
+import LabSeriesBanner from '@/components/LabSeriesBanner'
+import LabQuiz from '@/components/LabQuiz'
 import { getCurrentProfile, hasRole } from '@/lib/auth'
+import { toggleLabCompletionForm } from '@/lib/progress'
+import { createClient } from '@/lib/supabase/server'
+import { SITE_URL, SITE_NAME, SITE_AUTHOR } from '@/lib/site'
+import type { Metadata } from 'next'
 
 export async function generateStaticParams() {
-  return getAllLabs().map(l => ({ slug: l.slug }))
+  const all = await getAllLabs()
+  return all.map(l => ({ slug: l.slug }))
 }
 
-export async function generateMetadata({ params }: { params: Promise<{ slug: string }> }) {
+export async function generateMetadata({ params }: { params: Promise<{ slug: string }> }): Promise<Metadata> {
   const { slug } = await params
-  const lab = getLabBySlug(slug)
+  const lab = await getLabBySlug(slug)
   if (!lab) return {}
-  return { title: `${lab.title} — Lab dev.sec.ops`, description: lab.objective }
+  const url = `${SITE_URL}/labs/${lab.slug}`
+  return {
+    title: `${lab.title} — Lab ${SITE_NAME}`,
+    description: lab.objective,
+    alternates: { canonical: url },
+    openGraph: {
+      title: lab.title,
+      description: lab.objective,
+      url,
+      siteName: SITE_NAME,
+      type: 'article',
+      locale: 'fr_FR',
+      authors: [SITE_AUTHOR],
+      tags: [lab.tag, lab.difficulty],
+    },
+    twitter: {
+      card: 'summary_large_image',
+      title: lab.title,
+      description: lab.objective,
+    },
+  }
 }
 
 const DIFF_DOTS: Record<string, number> = {
@@ -25,22 +55,61 @@ const DIFF_DOTS: Record<string, number> = {
 
 export default async function LabPage({ params }: { params: Promise<{ slug: string }> }) {
   const { slug } = await params
-  const lab = getLabBySlug(slug)
+  const lab = await getLabBySlug(slug)
   if (!lab) notFound()
 
   const profile = await getCurrentProfile()
   const allowed = hasRole(profile?.role ?? null, lab.minRole)
 
+  // Statut actuel de progression (si l'user est connecté)
+  let labStatus: 'started' | 'completed' | null = null
+  if (allowed && profile && process.env.NEXT_PUBLIC_SUPABASE_URL) {
+    try {
+      const supabase = await createClient()
+      const { data } = await supabase
+        .from('lab_progress')
+        .select('status')
+        .eq('lab_slug', lab.slug)
+        .maybeSingle()
+      labStatus = (data?.status as 'started' | 'completed') ?? null
+    } catch {}
+  }
+
   const { tc } = getThemeClasses(lab.theme)
   const col = tc === 'tv' ? 'var(--v)' : tc === 'tc' ? 'var(--c)' : 'var(--a)'
   const dots = DIFF_DOTS[lab.difficulty] || 1
-  const otherLabs = getAllLabs().filter(l => l.slug !== lab.slug).slice(0, 3)
+  const allLabs = await getAllLabs()
+  const labsInSeries = lab.series ? allLabs.filter(l => l.series === lab.series) : []
+  // En présence d'une série, "otherLabs" privilégie les autres labs de la série
+  const otherLabs = lab.series
+    ? allLabs.filter(l => l.slug !== lab.slug && l.series !== lab.series).slice(0, 3)
+    : allLabs.filter(l => l.slug !== lab.slug).slice(0, 3)
+
+  const jsonLd = {
+    '@context': 'https://schema.org',
+    '@type': 'LearningResource',
+    name: lab.title,
+    description: lab.objective,
+    learningResourceType: 'Lab',
+    educationalLevel: lab.difficulty,
+    timeRequired: lab.duration,
+    teaches: lab.tools.join(', '),
+    inLanguage: 'fr',
+    keywords: [lab.tag, lab.difficulty, ...lab.tools],
+    author: { '@type': 'Person', name: SITE_AUTHOR },
+    publisher: { '@type': 'Organization', name: SITE_NAME, url: SITE_URL },
+    url: `${SITE_URL}/labs/${lab.slug}`,
+  }
 
   return (
     <div style={{ minHeight:'100vh', background:'var(--bg)', paddingTop:0 }}>
+      <script type="application/ld+json" dangerouslySetInnerHTML={{ __html: JSON.stringify(jsonLd) }} />
       <ReadingProgress />
+      <TableOfContents />
       <style>{`
-        .lb-hero { padding:80px 0 50px; border-bottom:1px solid var(--border); position:relative; overflow:hidden; }
+        .lb-hero { padding:140px 0 50px; border-bottom:1px solid var(--border); position:relative; overflow:hidden; }
+        .lb-crumb { display:inline-flex; align-items:center; gap:8px; font-family:var(--fm); font-size:11px; letter-spacing:.12em; color:var(--dim); text-transform:uppercase; margin-bottom:28px; padding:6px 14px; border-radius:100px; border:1px solid var(--border); background:rgba(255,255,255,.025); transition:color .2s, border-color .2s, background .2s; }
+        .lb-crumb:hover { color:var(--text); border-color:rgba(255,255,255,.18); background:rgba(255,255,255,.04); }
         .lb-hero-orb { position:absolute; width:500px; height:400px; border-radius:50%; filter:blur(110px); top:-150px; right:-80px; pointer-events:none; opacity:.5; }
         .lb-hero-inner { max-width:860px; margin:0 auto; padding:0 48px; position:relative; z-index:1; }
         .lb-tag { font-family:var(--fm); font-size:10px; letter-spacing:.18em; text-transform:uppercase; padding:4px 12px; border-radius:100px; color:var(--lb-col); background:color-mix(in oklab, var(--lb-col) 10%, transparent); border:1px solid color-mix(in oklab, var(--lb-col) 22%, transparent); display:inline-block; margin-bottom:24px; }
@@ -85,15 +154,6 @@ export default async function LabPage({ params }: { params: Promise<{ slug: stri
         @media(max-width:768px) { .lb-hero-inner, .lb-body, .lb-foot { padding-left:24px; padding-right:24px; } }
       `}</style>
 
-      <nav className="ao-nav">
-        <Link href="/labs" className="ao-back">
-          <svg width="16" height="16" viewBox="0 0 16 16" fill="none" aria-hidden="true"><path d="M10 3L5 8l5 5" stroke="currentColor" strokeWidth="1.5" strokeLinecap="round" strokeLinejoin="round"/></svg>
-          Tous les labs
-        </Link>
-        <Link href="/" className="ao-logo">dev.<b>sec</b>.ops</Link>
-        <div style={{ width:120 }} />
-      </nav>
-
       <div className="lb-hero" style={{ '--lb-col': col } as React.CSSProperties}>
         <div className="lb-hero-orb" aria-hidden="true" style={{
           background: lab.theme === 'violet' ? 'oklch(0.50 0.28 280/.20)'
@@ -101,6 +161,10 @@ export default async function LabPage({ params }: { params: Promise<{ slug: stri
                     : 'oklch(0.54 0.18 65/.18)',
         }} />
         <div className="lb-hero-inner">
+          <Link href="/labs" className="lb-crumb">
+            <svg width="11" height="11" viewBox="0 0 12 12" fill="none" aria-hidden="true"><path d="M7.5 3L4 6l3.5 3" stroke="currentColor" strokeWidth="1.5" strokeLinecap="round" strokeLinejoin="round"/></svg>
+            Tous les labs
+          </Link>
           <span className="lb-tag">Lab · {lab.tag}</span>
           <h1 className="lb-title">{lab.title}</h1>
           <p className="lb-obj">{lab.objective}</p>
@@ -124,6 +188,10 @@ export default async function LabPage({ params }: { params: Promise<{ slug: stri
             </span>
           </div>
 
+          <div style={{ marginTop: 20 }}>
+            <BookmarkButton type="lab" slug={lab.slug} />
+          </div>
+
           <div className="lb-info-grid">
             <div className="lb-info-cell">
               <div className="lb-info-label">// Prérequis</div>
@@ -143,10 +211,27 @@ export default async function LabPage({ params }: { params: Promise<{ slug: stri
         </div>
       </div>
 
-      {allowed ? (
-        <div className="lb-body prose" style={{ '--lb-col': col } as React.CSSProperties}>
-          <MDXRemote source={lab.content} />
+      {lab.series && labsInSeries.length > 1 && (
+        <div style={{ paddingTop: 28 }}>
+          <LabSeriesBanner current={lab} allInSeries={labsInSeries} />
         </div>
+      )}
+
+      {allowed ? (
+        <>
+          <div className="lb-body prose" style={{ '--lb-col': col } as React.CSSProperties}>
+            <MDXRemote source={lab.content} components={mdxComponents} />
+          </div>
+          {profile && lab.quiz && lab.quiz.length > 0 && (
+            <LabQuiz
+              slug={lab.slug}
+              questions={lab.quiz}
+              alreadyCompleted={labStatus === 'completed'}
+              onComplete={toggleLabCompletionForm}
+              themeColor={col}
+            />
+          )}
+        </>
       ) : (
         <Paywall
           required={lab.minRole}
@@ -158,6 +243,26 @@ export default async function LabPage({ params }: { params: Promise<{ slug: stri
       )}
 
       <div className="lb-foot">
+        {allowed && profile && (!lab.quiz || lab.quiz.length === 0) && (
+          <form action={toggleLabCompletionForm} className="lb-foot-cta" style={{ '--lb-col': col } as React.CSSProperties}>
+            <input type="hidden" name="slug" value={lab.slug} />
+            <div>
+              <div className="lb-foot-cta-text">
+                {labStatus === 'completed' ? '🎉 Lab terminé' : 'Tu as fini ce lab ?'}
+              </div>
+              <div className="lb-foot-cta-sub">
+                {labStatus === 'completed'
+                  ? 'Bravo. Il apparaît dans ton parcours.'
+                  : 'Marque-le comme terminé pour le retrouver dans ton profil.'}
+              </div>
+            </div>
+            <button type="submit" className={labStatus === 'completed' ? 'btn-g' : 'btn-p'} style={{ fontSize:13 }}>
+              {labStatus === 'completed' ? 'Réouvrir' : 'Marquer comme terminé'}
+              {labStatus !== 'completed' && <svg width="12" height="12" viewBox="0 0 12 12" fill="none" aria-hidden="true"><path d="M2 6.5L4.5 9l5.5-6" stroke="currentColor" strokeWidth="1.6" strokeLinecap="round" strokeLinejoin="round"/></svg>}
+            </button>
+          </form>
+        )}
+
         <div className="lb-foot-cta">
           <div>
             <div className="lb-foot-cta-text">Bloqué ou une question ?</div>

@@ -3,7 +3,14 @@ import { useMemo, useRef, useState } from 'react'
 import Link from 'next/link'
 import ScrollReveal from '@/components/ScrollReveal'
 import { LabMeta, LabDifficulty } from '@/lib/labs'
-import { getThemeClasses } from '@/lib/theme'
+import { getThemeClasses, MinRole } from '@/lib/theme'
+
+type UserRole = 'free' | 'pro' | 'admin'
+const ROLE_RANK: Record<UserRole, number> = { free: 0, pro: 1, admin: 2 }
+function userHasAccess(userRole: UserRole | null | undefined, required: MinRole): boolean {
+  if (!userRole) return required === 'free'
+  return ROLE_RANK[userRole] >= ROLE_RANK[required as UserRole]
+}
 
 const DIFFICULTIES: { key: 'all' | LabDifficulty; label: string }[] = [
   { key: 'all',           label: 'Tous' },
@@ -25,7 +32,7 @@ const CATEGORIES: { key: 'all' | 'Infrastructure' | 'Cybersécurité' | 'Réseau
   { key: 'Réseau',         label: 'Réseau' },
 ]
 
-export default function LabsClient({ labs }: { labs: LabMeta[] }) {
+export default function LabsClient({ labs, userRole }: { labs: LabMeta[]; userRole?: UserRole | null }) {
   const cards = useRef<(HTMLAnchorElement | null)[]>([])
   const [diff, setDiff] = useState<'all' | LabDifficulty>('all')
   const [cat, setCat]   = useState<typeof CATEGORIES[number]['key']>('all')
@@ -200,7 +207,7 @@ export default function LabsClient({ labs }: { labs: LabMeta[] }) {
                       style={{ '--lab-col': col } as React.CSSProperties}
                       aria-label={`Ouvrir le lab : ${lab.title}`}
                     >
-                      {lab.minRole !== 'free' && (
+                      {lab.minRole !== 'free' && !userHasAccess(userRole, lab.minRole) && (
                         <span style={{ position:'absolute', top:14, right:14, zIndex:2, display:'inline-flex', alignItems:'center', gap:5, padding:'4px 10px', borderRadius:100, background:'rgba(7,7,12,.78)', backdropFilter:'blur(8px)', border:'1px solid oklch(0.68 0.24 280/.4)', color:'var(--v)', fontFamily:'var(--fm)', fontSize:9, letterSpacing:'.14em', textTransform:'uppercase' }} aria-label={`Contenu ${lab.minRole}`}>
                           <svg width="9" height="9" viewBox="0 0 12 12" fill="none" aria-hidden="true"><rect x="2.5" y="5.5" width="7" height="5" rx="1" stroke="currentColor" strokeWidth="1.2"/><path d="M4 5.5V4a2 2 0 014 0v1.5" stroke="currentColor" strokeWidth="1.2"/></svg>
                           {lab.minRole}

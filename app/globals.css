@@ -21,6 +21,28 @@
 }
 *, *::before, *::after { box-sizing: border-box; margin: 0; padding: 0; }
 html { scroll-behavior: smooth; }
+
+/* a11y — skip link visible au focus clavier */
+.skip-link {
+  position: absolute; left: -9999px; top: 0; z-index: 1000;
+  background: var(--v); color: #fff; padding: 12px 18px;
+  font-family: var(--fm); font-size: 12px; letter-spacing: .12em; text-transform: uppercase;
+  border-radius: 0 0 8px 0;
+}
+.skip-link:focus { left: 0; outline: 2px solid var(--c); outline-offset: 2px; }
+
+/* a11y — respect prefers-reduced-motion */
+@media (prefers-reduced-motion: reduce) {
+  *, *::before, *::after {
+    animation-duration: 0.001ms !important;
+    animation-iteration-count: 1 !important;
+    transition-duration: 0.001ms !important;
+    scroll-behavior: auto !important;
+  }
+  html { scroll-behavior: auto; }
+  .reveal { opacity: 1 !important; transform: none !important; }
+  .clip-inner, .split-line-inner { transform: none !important; opacity: 1 !important; }
+}
 body {
   background: var(--bg); color: var(--text); font-family: var(--fb);
   font-size: 16px; line-height: 1.65; overflow-x: hidden; -webkit-font-smoothing: antialiased;

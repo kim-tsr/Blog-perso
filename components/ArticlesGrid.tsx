@@ -1,12 +1,19 @@
 'use client'
 import { useRef } from 'react'
 import Link from 'next/link'
-import { ArticleMeta, getThemeClasses } from '@/lib/theme'
+import { ArticleMeta, getThemeClasses, MinRole } from '@/lib/theme'
 import ScrollReveal from './ScrollReveal'
 
-interface Props { articles: ArticleMeta[]; hideMeta?: boolean }
+type UserRole = 'free' | 'pro' | 'admin'
+const ROLE_RANK: Record<UserRole, number> = { free: 0, pro: 1, admin: 2 }
+function userHasAccess(userRole: UserRole | null | undefined, required: MinRole): boolean {
+  if (!userRole) return required === 'free'
+  return ROLE_RANK[userRole] >= ROLE_RANK[required as UserRole]
+}
 
-export default function ArticlesGrid({ articles, hideMeta }: Props) {
+interface Props { articles: ArticleMeta[]; hideMeta?: boolean; userRole?: UserRole | null }
+
+export default function ArticlesGrid({ articles, hideMeta, userRole }: Props) {
   const cards = useRef<(HTMLAnchorElement|null)[]>([])
 
   const onMove = (e: React.MouseEvent<HTMLAnchorElement>, i: number) => {
@@ -65,7 +72,7 @@ export default function ArticlesGrid({ articles, hideMeta }: Props) {
                 onMouseLeave={() => onLeave(i)}
                 aria-label={`Lire : ${a.title}`}
               >
-                {a.minRole !== 'free' && (
+                {a.minRole !== 'free' && !userHasAccess(userRole, a.minRole) && (
                   <span className="ac-lock" aria-label={`Contenu ${a.minRole}`}>
                     <svg width="9" height="9" viewBox="0 0 12 12" fill="none" aria-hidden="true"><rect x="2.5" y="5.5" width="7" height="5" rx="1" stroke="currentColor" strokeWidth="1.2"/><path d="M4 5.5V4a2 2 0 014 0v1.5" stroke="currentColor" strokeWidth="1.2"/></svg>
                     {a.minRole}

@@ -1,11 +1,11 @@
 ---
 title: "Maillage WireGuard entre 3 nœuds"
 slug: wireguard-mesh
-objective: "Construire un mesh VPN chiffré full-mesh entre 3 machines, tester la latence et la résilience."
+objective: "Construire un mesh VPN chiffré full-mesh entre 3 machines, comprendre la cryptographie sous-jacente, tester la latence et la résilience."
 tag: Réseau
 theme: amber
 difficulty: intermédiaire
-duration: "30 min"
+duration: "45 min"
 prerequisites:
   - "3 VPS Linux (Debian/Ubuntu) avec IP publique"
   - "Notions de routage IP et NAT"
@@ -13,11 +13,115 @@ tools:
   - "WireGuard"
   - "iproute2"
   - "wg-quick"
+quiz:
+  - question: "Quel est l'avantage de WireGuard par rapport à OpenVPN en termes de surface d'attaque ?"
+    options:
+      - "WireGuard est plus rapide à configurer"
+      - "WireGuard fait ~4000 lignes de code (vs ~600k pour OpenVPN+OpenSSL), choix cryptographique unique (pas de négociation) — minimise les bugs et 0day"
+      - "WireGuard a plus de fonctionnalités"
+      - "OpenVPN est obsolète"
+    correct: 1
+    explanation: "WireGuard tient dans le kernel Linux mainline. Code auditable en quelques jours. Pas de négociation d'algos (ChaCha20+Poly1305, Curve25519, BLAKE2s, SipHash24 fixés) → pas de downgrade attack possible. C'est l'opposé du Swiss army knife OpenVPN."
+  - question: "Pourquoi un mesh full-mesh est-il préféré à un hub-and-spoke pour 3 sites critiques ?"
+    options:
+      - "Le mesh consomme moins de bande passante"
+      - "Pas de single point of failure : si le hub tombe, tout le trafic passe encore peer-to-peer. De plus la latence A↔B est directe au lieu de A→hub→B"
+      - "Le mesh est plus simple à configurer"
+      - "Hub-and-spoke ne marche pas avec WireGuard"
+    correct: 1
+    explanation: "Hub-and-spoke (Tailscale par défaut) simplifie la config (chacun parle au hub) mais centralise les pannes et ajoute un hop. Mesh = chaque nœud connaît N-1 peers, latence minimale, résilience maximale. Tradeoff : config O(N²) à maintenir → Ansible obligatoire."
+  - question: "À quoi sert 'PersistentKeepalive = 25' ?"
+    options:
+      - "Force la reconnexion toutes les 25 secondes"
+      - "Envoie un paquet vide toutes les 25s pour maintenir la session NAT ouverte chez le routeur de l'autre bout — sinon le mapping NAT expire et le peer derrière NAT devient injoignable"
+      - "Encrypt the keepalive"
+      - "Limite le débit"
+    correct: 1
+    explanation: "NAT routers timeout les mappings UDP en 30-60s d'inactivité. Sans keepalive, un peer derrière NAT ne reçoit plus de paquets après inactivité (pour les paquets entrants non sollicités). Le keepalive maintient le 'trou' ouvert (hole punching). 25s = un peu avant le timeout typique."
+  - question: "Quelle est la différence entre 'AllowedIPs' côté Peer et le routage classique ?"
+    options:
+      - "AllowedIPs est juste un commentaire"
+      - "AllowedIPs sert à la fois de table de routage (vers quel peer envoyer un paquet) ET de filtre cryptographique entrant (un paquet déchiffré venant de ce peer doit avoir une source dans AllowedIPs sinon il est jeté)"
+      - "AllowedIPs ne sert qu'à filtrer le trafic sortant"
+      - "AllowedIPs est un héritage d'OpenVPN"
+    correct: 1
+    explanation: "C'est le concept central de WireGuard : Cryptokey Routing. AllowedIPs = qui-peut-parler-de-quoi. Routage sortant + ACL entrant en une seule liste. Un peer ne peut pas spoofer une IP qui n'est pas dans son AllowedIPs : impossible de prétendre être quelqu'un d'autre."
+  - question: "Pourquoi WireGuard utilise-t-il UDP plutôt que TCP ?"
+    options:
+      - "UDP est plus simple à coder"
+      - "TCP-over-TCP cause un problème de 'TCP meltdown' (deux mécanismes de retransmit qui s'amplifient mutuellement). UDP laisse le TCP encapsulé gérer sa propre fiabilité"
+      - "TCP est obsolète"
+      - "UDP est obligatoire pour le chiffrement"
+    correct: 1
+    explanation: "Tunneller du TCP dans du TCP = deux algos congestionnels concurrents → perfs catastrophiques sur lien faible. UDP est connectionless, état minimal (juste les peers + dernier handshake), parfait pour le tunneling. Inconvénient : certains firewalls corporate bloquent UDP non-DNS → workaround : udp2raw, wstunnel."
 ---
+
+## 🧠 Théorie : WireGuard, le VPN qui tient en 4000 lignes
+
+WireGuard est un protocole VPN moderne, intégré au kernel Linux depuis 5.6 (2020). Ses choix de design tranchent avec OpenVPN/IPsec :
+
+```
+   OpenVPN                            WireGuard
+   ─────────────                      ─────────────
+   ~600 000 LOC (incl. OpenSSL)      ~4 000 LOC
+   N algos cryptos négociés           1 algo fixé pour chaque rôle
+   TCP ou UDP                         UDP only
+   État connexion riche               Stateless (handshake éphémère)
+   PKI X.509 (CA, certs, CRL)         Échange de clés publiques
+   Démarre lent (~1s handshake)       Démarre instantané (~1 RTT)
+```
+
+### Cryptographie utilisée (toutes fixées, pas de négociation)
+
+| Rôle | Algorithme |
+|---|---|
+| Échange de clés | Curve25519 (ECDH) |
+| Chiffrement symétrique | ChaCha20 |
+| Authentification message | Poly1305 |
+| Hashing | BLAKE2s |
+| HKDF | BLAKE2s |
+| Anti-DoS | SipHash24 |
+
+Pas de négociation = pas de downgrade attack. Si un algo casse demain, on bump le protocole. Simple, brutal, sûr.
+
+### Topologie : full-mesh vs hub-and-spoke
+
+```
+   Full-mesh                       Hub-and-spoke
+   ─────────                       ──────────────
+        N1                              N1
+       /  \                              │
+      /    \                             │
+    N2 ──── N3                  N2 ──── HUB ──── N3
+                                       (SPOF)
+   
+   3 peers/nœud                    1 peer/nœud (spoke)
+   Latence directe                 +1 hop systématique
+   Résilient                       Hub down = mesh KO
+   Config O(N²)                    Config O(N)
+```
+
+Pour 3-10 nœuds : full-mesh. Au-delà : hub-and-spoke avec multiple hubs (mode Tailscale DERP) ou orchestration (Headscale).
 
 ## 🎯 Objectif
 
 Établir un **mesh** WireGuard où chaque nœud parle directement à chaque autre — pas de point central. Idéal pour un homelab distribué ou un cluster Kubernetes multi-site.
+
+## 📐 Architecture cible
+
+```
+            Internet
+       ┌────────┴────────┐
+       │        │        │
+       ▼        ▼        ▼
+      N1       N2       N3
+   10.50.0.1  .0.2   .0.3
+       ▲        ▲        ▲
+       └────────┼────────┘
+                │
+   Chaque flèche = tunnel WG chiffré bout-en-bout
+   Pas de centralisation, pas de SPOF
+```
 
 ## 📋 Étape 1 — Générer les paires de clés
 
@@ -30,6 +134,8 @@ cat privatekey publickey
 ```
 
 Notez les 3 clés publiques — vous en aurez besoin sur tous les nœuds.
+
+> 💡 La clé privée doit rester sur la machine qui la possède. La clé publique est partageable sans risque.
 
 ## 📋 Étape 2 — Configurer N1
 
@@ -60,6 +166,17 @@ Sur **chaque** autre nœud, créez un fichier équivalent avec son IP interne et
 
 > 💡 La clé d'un mesh : **chaque** nœud doit avoir **N-1** peers déclarés. Pas de hiérarchie.
 
+### Comprendre AllowedIPs
+
+`AllowedIPs = 10.50.0.2/32` côté N1 pour N2 signifie :
+- **Sortant** : tout paquet vers 10.50.0.2 part dans ce tunnel
+- **Entrant** : tout paquet déchiffré de ce peer DOIT venir de 10.50.0.2, sinon jeté
+
+Si vous voulez router un sous-réseau entier via N2 (ex: 192.168.10.0/24 derrière N2) :
+```ini
+AllowedIPs = 10.50.0.2/32, 192.168.10.0/24
+```
+
 ## 📋 Étape 3 — Démarrer le tunnel
 
 Sur les 3 nœuds :
@@ -87,6 +204,17 @@ sudo wg show
 
 `wg show` doit lister les 2 peers avec un `latest handshake` récent et du trafic dans `transfer`.
 
+### Anatomie de wg show
+
+```
+peer: ABcd...PUB_N2
+  endpoint: 203.0.113.2:51820
+  allowed ips: 10.50.0.2/32
+  latest handshake: 1 minute, 22 seconds ago    ← < 3 min = sain
+  transfer: 4.2 KiB received, 5.1 KiB sent       ← trafic réel
+  persistent keepalive: every 25 seconds
+```
+
 ## 📋 Étape 5 — Test de résilience
 
 Coupez WireGuard sur N1, puis testez depuis N2 vers N3 :
@@ -98,14 +226,36 @@ ping 10.50.0.3
 
 Ça doit fonctionner — c'est tout l'intérêt du mesh par rapport à un hub-and-spoke.
 
+## 📋 Étape 6 — Mesure de perf
+
+```bash
+# Sur N3 : démarrer iperf3
+iperf3 -s
+
+# Sur N1 : benchmark via le tunnel
+iperf3 -c 10.50.0.3 -t 30
+```
+
+Vous devriez avoir **~95% du débit hors tunnel**. ChaCha20 est optimisé pour les CPU modernes, l'overhead est minime même sans AES-NI.
+
+## 🧠 Pitfalls courants
+
+❌ **Oublier `PersistentKeepalive` derrière NAT** : le mapping NAT meurt, le peer devient injoignable depuis dehors.
+❌ **`AllowedIPs = 0.0.0.0/0` sur tous les peers** : conflit de routage, un seul peer "gagne".
+❌ **Même `ListenPort` sur des peers derrière le même NAT** : conflit de port forwarding.
+❌ **Activer `wg-quick` sans `systemctl enable`** : reboot = tunnel down.
+❌ **Pas de monitoring** : un handshake qui ne se refait pas pendant 1h doit alerter.
+
 ## ✅ Validation
 
 - 3 handshakes établis sur chaque nœud
 - Ping bi-directionnel entre tous les couples
 - N2 ↔ N3 fonctionne même quand N1 est down
+- iperf3 montre ~95% du débit réseau hors tunnel
 
 ## 🚀 Pour aller plus loin
 
 - Automatisez avec **Ansible** : un playbook qui génère les clés et les configs depuis un inventaire
-- Ajoutez **BIRD** pour annoncer des préfixes en BGP sur le mesh
+- Ajoutez **BIRD** pour annoncer des préfixes en BGP sur le mesh (multi-site dynamique)
 - Migrez vers **Headscale** ou **Netbird** pour un control plane open-source
+- Combinez avec le lab **Hardening SSH** : SSH écoute uniquement sur 10.50.0.0/24 → zero attack surface publique

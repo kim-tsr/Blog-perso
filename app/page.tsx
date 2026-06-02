@@ -10,9 +10,9 @@ import HomeStats from '@/components/HomeStats'
 import RoadmapPreview from '@/components/RoadmapPreview'
 import LabsPreview from '@/components/LabsPreview'
 
-export default function Home() {
-  const articles = getAllArticleMeta()
-  const labs = getAllLabMeta()
+export default async function Home() {
+  const articles = await getAllArticleMeta()
+  const labs = await getAllLabMeta()
   const featured = articles[0]
 
   const stats = [

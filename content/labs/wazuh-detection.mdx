@@ -1,11 +1,11 @@
 ---
 title: "SIEM Wazuh : déclencher et investiguer une alerte"
 slug: wazuh-detection
-objective: "Déployer Wazuh en lab, ingérer les logs d'un agent, simuler une attaque, voir l'alerte tomber."
+objective: "Comprendre l'architecture d'un SIEM, déployer Wazuh, ingérer les logs d'un agent, simuler une attaque, et voir l'alerte tomber."
 tag: Cybersécurité
 theme: cyan
 difficulty: avancé
-duration: "45 min"
+duration: "60 min"
 minRole: pro
 prerequisites:
   - "Une VM avec 4 Go de RAM minimum"
@@ -15,11 +15,99 @@ tools:
   - "Wazuh manager"
   - "Wazuh agent"
   - "Docker Compose"
+quiz:
+  - question: "Quel est le rôle principal d'un SIEM ?"
+    options:
+      - "Bloquer les attaques en temps réel"
+      - "Collecter, normaliser, corréler et alerter sur des événements de sécurité provenant de sources hétérogènes (endpoints, réseau, cloud) pour permettre la détection et l'investigation"
+      - "Remplacer un antivirus"
+      - "Stocker les passwords"
+    correct: 1
+    explanation: "SIEM = Security Information and Event Management. C'est l'organe sensoriel : il VOIT, il CORRELE, il ALERTE. La réponse active est faite par d'autres systèmes (SOAR, EDR, firewall). Wazuh, Splunk, ELK Security, Sentinel sont des SIEM."
+  - question: "Pourquoi normaliser les logs (ECS, Wazuh fields) est-il essentiel ?"
+    options:
+      - "Pour économiser du stockage"
+      - "Sans normalisation, on ne peut pas écrire une seule règle qui matche 'login échoué' sur SSH, Windows, Apache, RDP — chaque source a son format. Une fois mappée vers un schéma commun (ex: event.outcome=failure), une règle marche pour tous"
+      - "C'est obligatoire RGPD"
+      - "Les logs normalisés sont plus rapides"
+    correct: 1
+    explanation: "ECS (Elastic Common Schema) : champs standards user.name, source.ip, event.action. Avant : 12 façons d'écrire 'login failed' selon la source. Après : une règle 'event.action=login AND event.outcome=failure' couvre tout. C'est la différence entre un parser SIEM mature et un grep glorifié."
+  - question: "Quelle est la différence entre une règle 'atomic' (ex: Wazuh 5712) et une règle 'composite' (ex: 5710) ?"
+    options:
+      - "Atomic est plus rapide"
+      - "Atomic = matche UN événement individuel ('un login a échoué'). Composite = corrèle plusieurs événements dans une fenêtre temporelle ('8 logins échoués en 2 minutes depuis la même IP')"
+      - "Atomic est obsolète"
+      - "Composite ne fonctionne qu'avec ML"
+    correct: 1
+    explanation: "Atomic est utile pour le contexte (audit trail) mais bruyant si on alerte dessus. Composite (corrélation) extrait le SIGNAL : 1 fail = bénin, 100 fails = brute force. Wazuh utilise des règles enfant (`if_matched_sid`) pour la corrélation."
+  - question: "À quoi sert le mapping MITRE ATT&CK dans une règle SIEM ?"
+    options:
+      - "À faire joli dans le dashboard"
+      - "Documente le contexte adversaire (tactic + technique) — permet de mesurer la couverture défensive, de communiquer avec le SOC, et de prioriser ('on a 0 détection sur Persistence T1136 → trou')"
+      - "C'est obligatoire pour Wazuh"
+      - "Pour faire la matrice ASCII"
+    correct: 1
+    explanation: "MITRE ATT&CK = langue commune des défenseurs. Une matrice de couverture (heatmap par technique) révèle les angles morts. Communiquer 'on a alerté sur T1110.001' est plus précis que 'brute force suspect'. C'est aussi la base du threat hunting."
+  - question: "Qu'est-ce qu'un 'active response' dans Wazuh et pourquoi est-il à manier avec précaution ?"
+    options:
+      - "Une réponse rapide du support"
+      - "Une action automatique déclenchée par une règle (ex: iptables -A INPUT -s $IP -j DROP). Risque : faux positif → ban accidentel d'un user légitime ou pire d'un IP de prod"
+      - "Un email d'alerte"
+      - "Un mode debug"
+    correct: 1
+    explanation: "Active response = passage du SIEM au SOAR (réponse). Puissant mais dangereux. Pré-requis : seuils prudents, allowlist (IP corp, monitoring), timeout court (10 min), action réversible. Production sérieuse : on alerte d'abord, on auto-ban seulement les très haut-confiance avec scope limité."
 ---
+
+## 🧠 Théorie : qu'est-ce qu'un SIEM ?
+
+```
+   Sources hétérogènes        Pipeline SIEM              Sortie
+   ────────────────────       ─────────────              ──────
+   
+   sshd auth.log     ┐                                
+   nginx access      │      ┌─────────┐               
+   firewall iptables ├────► │ Collect │ ───┐          
+   Windows EventLog  │      └─────────┘    │          
+   k8s audit log     │                     ▼          
+   AWS CloudTrail    │             ┌──────────────┐   
+   EDR (osquery)     ┘             │  Normalize   │   
+                                   │  (ECS/wazuh) │   
+                                   └──────┬───────┘   
+                                          ▼          
+                                   ┌──────────────┐   
+                                   │   Correlate  │ ─► Règles
+                                   │  (rules eng) │    composites
+                                   └──────┬───────┘   
+                                          ▼          
+                                   ┌──────────────┐   
+                                   │    Alert     │ ─► SOC
+                                   │    Store     │    Slack/email
+                                   │    Search    │    Tableau de bord
+                                   └──────────────┘   
+```
+
+### Composants Wazuh
+
+| Composant | Rôle |
+|---|---|
+| **wazuh-manager** | Reçoit les events, décode, applique les règles, déclenche les alertes |
+| **wazuh-indexer** | Stockage des events (OpenSearch fork) |
+| **wazuh-dashboard** | UI (Kibana fork) |
+| **wazuh-agent** | Sur chaque host, collecte logs + FIM + scans + active-response |
+| **rulesets** | XML déclaratifs versionnés (rules + decoders + CDB lists) |
+
+### Différence SIEM vs EDR vs XDR
+
+```
+   EDR    : focalisé endpoint (process, FS, syscalls)        — CrowdStrike, SentinelOne
+   SIEM   : focalisé logs et events centralisés              — Splunk, Wazuh, Sentinel
+   XDR    : SIEM + EDR + Network + Cloud unifiés             — Palo XSIAM, MS Defender XDR
+   SOAR   : automatise les réponses (orchestration)          — Splunk SOAR, Tines, Shuffle
+```
 
 ## 🎯 Objectif
 
-Installer une stack **Wazuh** complète, brancher un agent sur une seconde machine, déclencher une détection (brute-force SSH) et investiguer dans Kibana/Wazuh Dashboard.
+Installer une stack **Wazuh** complète, brancher un agent sur une seconde machine, déclencher une détection (brute-force SSH) et investiguer dans Wazuh Dashboard.
 
 ## 📋 Étape 1 — Installer Wazuh manager (Docker)
 
@@ -33,6 +121,15 @@ docker compose up -d
 ```
 
 Patientez ~3 minutes que tous les conteneurs soient `healthy`. Accédez à `https://<ip-manager>` (admin / SecretPassword).
+
+Vérifiez les services :
+
+```bash
+docker compose ps
+# wazuh.manager  ........ Up (healthy)
+# wazuh.indexer  ........ Up (healthy)
+# wazuh.dashboard  ...... Up (healthy)
+```
 
 ## 📋 Étape 2 — Enregistrer un agent
 
@@ -55,14 +152,40 @@ systemctl enable --now wazuh-agent
 
 Dans le dashboard, l'agent passe **Active** au bout d'une minute.
 
-## 📋 Étape 3 — Activer la détection brute-force SSH
+## 📋 Étape 3 — Comprendre les règles Wazuh
 
-Wazuh fournit la règle **5712** par défaut (`SSH authentication failed`) et la règle **5710** (multiple failed logins). Vérifiez sur le manager :
+Wazuh fournit la règle **5712** (`SSH authentication failed`) et **5710** (`Multiple authentication failures`). Anatomie :
 
-```bash
-docker exec single-node-wazuh.manager-1 \
-  grep -A2 "5712" /var/ossec/ruleset/rules/0095-sshd_rules.xml
+```xml
+<!-- /var/ossec/ruleset/rules/0095-sshd_rules.xml -->
+<rule id="5712" level="5">
+  <if_sid>5700</if_sid>
+  <match>Failed password</match>
+  <description>sshd: authentication failed.</description>
+  <mitre>
+    <id>T1110.001</id>
+  </mitre>
+  <group>authentication_failed,pci_dss_10.2.4,...</group>
+</rule>
+
+<rule id="5710" level="10" frequency="8" timeframe="120">
+  <if_matched_sid>5712</if_matched_sid>
+  <same_source_ip />
+  <description>sshd: Multiple authentication failures.</description>
+  <mitre>
+    <id>T1110.001</id>
+  </mitre>
+</rule>
 ```
+
+### Décodage
+
+- `level="5"` → événement (loggé), pas alerté
+- `level="10"` → alerte significative (déclenche notif + dashboard)
+- `if_matched_sid="5712"` → corrélation : on attend N matches de la règle parent
+- `frequency=8` / `timeframe=120` → 8 fois en 2 min depuis même IP
+- `<mitre>` → contexte adversaire
+- `<group>` → compliance + classification (PCI-DSS, NIST 800-53, GDPR)
 
 ## 📋 Étape 4 — Simuler l'attaque
 
@@ -84,6 +207,19 @@ Dans **Wazuh Dashboard → Security events** :
 3. Cliquez sur un événement → champ `data.srcip` = votre poste
 4. Onglet **MITRE ATT&CK** → mappé sur **T1110.001 Brute Force: Password Guessing**
 
+### Investigation guidée
+
+Pour reconstruire le scénario complet :
+
+```
+1. timestamp du premier 5712 (failed password)
+2. source.ip de l'attaque
+3. quels users ont été testés ? (data.dstuser)
+4. y a-t-il un 5715 (Successful authentication) dans le même timeframe ?
+   → si oui, COMPROMISSION : isoler l'host, reset password
+5. l'IP est-elle dans nos threat feeds ? (Wazuh → Threat Intel)
+```
+
 ## 📋 Étape 6 — Réagir automatiquement
 
 Activez l'**active-response** `firewall-drop` dans `/var/ossec/etc/ossec.conf` sur l'agent :
@@ -99,15 +235,44 @@ Activez l'**active-response** `firewall-drop` dans `/var/ossec/etc/ossec.conf` s
 
 Relancez le brute-force : l'IP est **bannie 10 minutes** via iptables.
 
+> ⚠️ Toujours ajouter une **allowlist** (`/var/ossec/etc/ossec.conf` → `<white_list>`) avec les IP de votre infra, monitoring, bastions. Sinon un faux positif peut bloquer la prod.
+
+## 📋 Étape 7 — File Integrity Monitoring (bonus)
+
+Wazuh peut surveiller les fichiers sensibles :
+
+```xml
+<!-- ossec.conf de l'agent -->
+<syscheck>
+  <directories check_all="yes" realtime="yes">/etc</directories>
+  <directories check_all="yes" realtime="yes">/usr/bin,/usr/sbin</directories>
+  <ignore>/etc/mtab</ignore>
+  <ignore>/etc/random-seed</ignore>
+</syscheck>
+```
+
+Modifiez `/etc/passwd` → alerte **rule 550** (Integrity checksum changed) instantanément.
+
+## 🧠 Anti-patterns
+
+❌ **Brancher tous les agents direct sur le manager sans hiérarchie** : > 1000 agents = saturation manager.
+❌ **Désactiver toutes les règles "bruyantes" sans investigation** : on perd la baseline.
+❌ **Active-response sans allowlist** : ban accidentel d'un VPN corp.
+❌ **Ne pas tester les règles custom** : on découvre que la règle est silencieuse pendant un incident.
+❌ **Garder 30 jours d'event en chaud** : coût + perfs. Hot/Warm/Cold tiering obligatoire à l'échelle.
+
 ## ✅ Validation
 
 - L'agent apparaît **Active** dans le dashboard
 - L'alerte `Multiple authentication failures` est visible
 - L'attribut MITRE est correctement mappé
 - L'active-response ajoute une règle iptables
+- FIM alerte sur modification de `/etc/passwd`
 
 ## 🚀 Pour aller plus loin
 
-- Branchez **Suricata** sur la cible pour ingérer les IDS events
-- Activez **FIM** (File Integrity Monitoring) sur `/etc` et `/var/www`
+- Branchez **Suricata** sur la cible pour ingérer les IDS events (rules ET)
+- Activez **vulnerability detector** (scan CVE auto sur les paquets installés)
 - Exportez les alertes vers **Loki + Grafana** ou un n8n webhook
+- Écrivez vos propres règles **custom** dans `/var/ossec/etc/rules/local_rules.xml`
+- Couplez avec **TheHive + Cortex** pour le case management

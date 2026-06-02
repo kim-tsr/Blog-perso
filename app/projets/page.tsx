@@ -1,5 +1,6 @@
 import { Metadata } from 'next'
 import ProjectsClient from './ProjectsClient'
+import { getAllProjects, categoryToAccent } from '@/lib/projects'
 
 export const metadata: Metadata = {
   title: 'Mes Projets — dev.sec.ops',
@@ -19,63 +20,17 @@ export type Project = {
   live?: string
 }
 
-const PROJECTS: Project[] = [
-  {
-    title: 'k-leakd',
-    desc: 'Détecteur de secrets dans les manifests Kubernetes — scan en pre-commit, intégration ArgoCD, règles personnalisables.',
-    tags: ['Go', 'Kubernetes', 'eBPF', 'CLI'],
-    accent: 'c',
-    status: 'beta',
-    year: '2026',
-    github: 'https://github.com/kim-tsr',
-  },
-  {
-    title: 'homelab-iac',
-    desc: 'Infrastructure as Code complète pour mon homelab : Proxmox, Talos, ArgoCD, observabilité. Terraform + Ansible + GitOps.',
-    tags: ['Terraform', 'Ansible', 'Proxmox', 'ArgoCD'],
-    accent: 'v',
-    status: 'live',
-    year: '2026',
-    github: 'https://github.com/kim-tsr',
-  },
-  {
-    title: 'wg-mesh',
-    desc: 'Maillage WireGuard automatique entre nœuds — découverte mDNS, rotation de clés, fallback NAT traversal.',
-    tags: ['Rust', 'WireGuard', 'Networking'],
-    accent: 'a',
-    status: 'wip',
-    year: '2026',
-    github: 'https://github.com/kim-tsr',
-  },
-  {
-    title: 'sec-flow',
-    desc: 'Générateur de NetworkPolicies à partir d\'une capture eBPF — apprend du trafic réel pour produire des politiques restrictives.',
-    tags: ['Cilium', 'eBPF', 'Python', 'Sécurité'],
-    accent: 'c',
-    status: 'wip',
-    year: '2026',
-    github: 'https://github.com/kim-tsr',
-  },
-  {
-    title: 'wazuh-lab',
-    desc: 'Lab SIEM tout-en-un : Wazuh + ELK + agents simulés + dashboards adaptés aux scénarios d\'attaque MITRE ATT&CK.',
-    tags: ['Wazuh', 'ELK', 'Docker', 'MITRE'],
-    accent: 'c',
-    status: 'live',
-    year: '2025',
-    github: 'https://github.com/kim-tsr',
-  },
-  {
-    title: 'bgp-edu',
-    desc: 'Simulateur pédagogique de routage BGP — topologies prédéfinies, propagation visuelle, scénarios de filtrage et de fuite.',
-    tags: ['BIRD', 'BGP', 'Réseau', 'Pédagogie'],
-    accent: 'a',
-    status: 'archive',
-    year: '2025',
-    github: 'https://github.com/kim-tsr',
-  },
-]
-
-export default function ProjetsPage() {
-  return <ProjectsClient projects={PROJECTS} />
+export default async function ProjetsPage() {
+  const dbProjects = await getAllProjects()
+  const projects: Project[] = dbProjects.map(p => ({
+    title:  p.title,
+    desc:   p.description,
+    tags:   p.tags,
+    accent: categoryToAccent(p.category_slug),
+    status: p.status,
+    year:   p.year ?? '',
+    github: p.github_url ?? undefined,
+    live:   p.live_url ?? undefined,
+  }))
+  return <ProjectsClient projects={projects} />
 }

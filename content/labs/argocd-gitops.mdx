@@ -1,11 +1,11 @@
 ---
 title: "Pipeline GitOps avec ArgoCD"
 slug: argocd-gitops
-objective: "Mettre en place ArgoCD, synchroniser une application depuis un dépôt Git, observer le drift."
+objective: "Comprendre les principes GitOps, mettre en place ArgoCD, synchroniser une application depuis un dépôt Git, observer le drift et le self-heal."
 tag: Infrastructure
 theme: violet
 difficulty: intermédiaire
-duration: "35 min"
+duration: "50 min"
 minRole: pro
 prerequisites:
   - "Un cluster Kubernetes (k3s, kind, ou cloud)"
@@ -14,7 +14,103 @@ tools:
   - "ArgoCD"
   - "kubectl"
   - "Helm"
+quiz:
+  - question: "Quel est le principe fondateur du GitOps ?"
+    options:
+      - "Tout coder en YAML"
+      - "Git est la source unique de vérité de l'état désiré du système ; un agent (ArgoCD/Flux) réconcilie en continu l'état réel vers l'état Git"
+      - "Déployer via SSH"
+      - "Utiliser GitHub Actions"
+    correct: 1
+    explanation: "GitOps (Weaveworks 2017) : 4 principes — déclaratif, versionné en Git, approuvé automatiquement, réconcilié en continu. Le cluster ne fait pas autorité, le repo si. Tout changement passe par PR → audit gratuit."
+  - question: "Différence entre push-based (Jenkins kubectl apply) et pull-based (ArgoCD) ?"
+    options:
+      - "Push est plus rapide"
+      - "Push : CI a les credentials cluster, déploie depuis l'extérieur (surface d'attaque large). Pull : agent dans le cluster pull depuis Git (zero credentials sortants, RBAC interne)"
+      - "Pull ne marche pas sur EKS"
+      - "Ils sont identiques"
+    correct: 1
+    explanation: "Push-based : votre CI a kubectl + kubeconfig prod → un secret CI compromis = cluster compromis. Pull-based : seul ArgoCD parle au cluster (il EST dedans), il a juste besoin d'un accès READ au repo Git. Surface d'attaque drastiquement réduite + onboarding multi-env trivial."
+  - question: "Que fait 'selfHeal: true' dans une Application ArgoCD ?"
+    options:
+      - "Auto-corrige les bugs"
+      - "Si quelqu'un modifie une ressource manuellement (kubectl edit, scale, patch), ArgoCD détecte la dérive et la rétablit selon ce qui est dans Git"
+      - "Auto-update ArgoCD"
+      - "Auto-merge les PRs"
+    correct: 1
+    explanation: "Self-heal = le cluster ne PEUT PAS dévier durablement de Git. Modifier en direct devient inutile, tout doit passer par commit. Tradeoff : on perd la possibilité de patch d'urgence sans PR. Solution : ouvrir une PR rapide ou désactiver temporairement le sync auto."
+  - question: "Quelle est la limite principale du pattern 'App-of-Apps' à grande échelle ?"
+    options:
+      - "Trop de YAML"
+      - "Cardinalité : chaque app génère 1 Application CR, à 500 apps on a 500 CR à maintenir manuellement → ApplicationSet (templating) résout le problème"
+      - "ArgoCD ne supporte pas plus de 50 apps"
+      - "Git ne suit pas"
+    correct: 1
+    explanation: "App-of-Apps : une racine Application qui pointe vers un dossier de Applications children. Très visuel pour 10-50 apps. Au-delà, ApplicationSet templatise (1 manifest → N apps via un generator : git, list, cluster, matrix). Standard pour multi-cluster + multi-env."
+  - question: "Pourquoi utiliser une stratégie 'Sync Waves' ?"
+    options:
+      - "Pour faire des animations"
+      - "Forcer un ordre de déploiement (ex: Namespace puis CRDs puis Operators puis Apps) — sans, ArgoCD applique en parallèle et certaines ressources échouent (CRD pas encore créé)"
+      - "Économiser des ressources"
+      - "Pour les CI sequentielles"
+    correct: 1
+    explanation: "Annotation `argocd.argoproj.io/sync-wave: '-1'` (avant), '0' (default), '1' (après). Cas typique : wave -2 namespace, -1 secrets, 0 deployments, 1 ingress, 2 jobs de migration DB. Sans, on a des races et l'app rate son premier sync."
 ---
+
+## 🧠 Théorie : qu'est-ce que GitOps exactement ?
+
+Le terme a été inventé par Weaveworks en 2017. Quatre principes fondateurs :
+
+```
+   1. DÉCLARATIF
+      L'état désiré est décrit (YAML), pas impératé (script).
+
+   2. VERSIONNÉ ET IMMUTABLE
+      Source de vérité = Git. Toute l'histoire est auditable.
+
+   3. APPROUVÉ AUTOMATIQUEMENT
+      Un commit mergé = un déploiement. Pas de webhook manuel.
+
+   4. RÉCONCILIÉ CONTINUELLEMENT
+      Un agent observe l'écart entre Git (souhaité) et cluster (réel),
+      et converge en boucle (la fameuse "reconciliation loop").
+```
+
+### Push vs Pull
+
+```
+   PUSH-based (Jenkins, GitHub Actions kubectl apply)
+   ─────────────────────────────────────────────────
+   
+   Git ──► CI ──► kubectl apply ──► Cluster
+              │                       
+              │ ⚠️  CI a les credentials cluster
+              │ ⚠️  Pas de réconciliation auto
+              │ ⚠️  CI hors cluster = surface d'attaque
+   
+   PULL-based (ArgoCD, Flux)
+   ─────────────────────────
+   
+   Git ◄── ArgoCD (dans le cluster) ──► Cluster (lui-même)
+            │
+            │ ✓ Aucun credential sortant
+            │ ✓ Reconciliation toutes les 3 min
+            │ ✓ Drift detection + self-heal
+```
+
+### Reconciliation loop
+
+```
+   ┌─────────────────────────────────┐
+   │   while True:                   │
+   │     desired = git_pull()        │ ◄── état souhaité
+   │     actual  = cluster_state()   │ ◄── état réel
+   │     diff = compare(actual,desired)
+   │     if diff:                    │
+   │       apply(diff) or alert()    │
+   │     sleep(180s)                 │
+   └─────────────────────────────────┘
+```
 
 ## 🎯 Objectif
 
@@ -43,6 +139,8 @@ Port-forward pour accéder à l'UI :
 kubectl port-forward svc/argocd-server -n argocd 8080:443
 # Ouvrez https://localhost:8080  (login: admin)
 ```
+
+> 💡 En prod : exposez via Ingress + TLS, intégrez SSO (OIDC), changez le password initial.
 
 ## 📋 Étape 2 — Préparer le dépôt Git
 
@@ -87,8 +185,10 @@ spec:
     namespace: default
   syncPolicy:
     automated:
-      prune: true
-      selfHeal: true
+      prune: true       # supprime les ressources retirées de Git
+      selfHeal: true    # corrige le drift manuel
+    syncOptions:
+      - CreateNamespace=true
 ```
 
 ```bash
@@ -96,6 +196,16 @@ kubectl apply -f argocd-app.yaml
 ```
 
 Dans l'UI, l'app passe **Syncing → Healthy** en quelques secondes.
+
+### Anatomie des champs critiques
+
+| Champ | Effet |
+|---|---|
+| `repoURL` | Source Git (HTTPS ou SSH) |
+| `targetRevision` | Branche, tag, ou commit SHA |
+| `path` | Sous-dossier dans le repo |
+| `automated.prune` | Supprime ce qui n'est plus dans Git |
+| `automated.selfHeal` | Annule les modifs manuelles |
 
 ## 📋 Étape 4 — Tester le drift
 
@@ -111,14 +221,80 @@ Quelques secondes plus tard, ArgoCD ramène à **2 replicas** — c'est le `self
 
 Modifiez l'image dans Git (`image: nginx`), commitez. ArgoCD synchronise. Revenez en arrière (`git revert`), ArgoCD redéploie l'ancienne version.
 
+→ Rollback = un `git revert` + push. Pas de "kubectl rollout undo" dispersé entre les sysadmins.
+
+## 📋 Étape 6 — Sync Waves (bonus)
+
+Pour orchestrer l'ordre :
+
+```yaml
+# namespace en premier
+apiVersion: v1
+kind: Namespace
+metadata:
+  name: myapp
+  annotations:
+    argocd.argoproj.io/sync-wave: "-2"
+---
+# secrets ensuite
+apiVersion: v1
+kind: Secret
+metadata:
+  name: db-creds
+  namespace: myapp
+  annotations:
+    argocd.argoproj.io/sync-wave: "-1"
+---
+# deployment dépend des secrets
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: api
+  namespace: myapp
+  annotations:
+    argocd.argoproj.io/sync-wave: "0"
+```
+
+## 📋 Étape 7 — App-of-Apps
+
+Pour gérer N apps :
+
+```yaml
+# root-app.yaml
+apiVersion: argoproj.io/v1alpha1
+kind: Application
+metadata:
+  name: root
+spec:
+  source:
+    repoURL: ...
+    path: argocd-apps/   # dossier contenant N Applications
+  destination:
+    namespace: argocd
+    server: https://kubernetes.default.svc
+```
+
+Chaque fichier dans `argocd-apps/` est une Application. Ajouter une app = commit dans ce dossier.
+
+## 🧠 Anti-patterns
+
+❌ **Stocker des secrets en clair dans Git** : utilisez Sealed Secrets, External Secrets, ou SOPS.
+❌ **Désactiver `selfHeal` "pour permettre les hotfix manuels"** : autant ne pas faire GitOps.
+❌ **Un seul méga-repo monolithique** : conflits de PR, RBAC impossible. Préférez 1 repo apps + 1 repo platform.
+❌ **Pas de Project ArgoCD** : tout admin → vol de role.
+❌ **Sync auto sans tests CI préalables** : YAML cassé en main = prod cassée.
+
 ## ✅ Validation
 
 - ArgoCD UI affiche l'app **Healthy + Synced**
 - Modifier le déploiement à la main est annulé sous 1 minute
 - `git revert` déploie l'ancienne version sans intervention
+- Sync waves respectées (namespace avant deployment)
 
 ## 🚀 Pour aller plus loin
 
 - Utilisez **ApplicationSets** pour générer N apps depuis un template
 - Activez **Sync Waves** pour orchestrer l'ordre de déploiement
 - Branchez **OPA Gatekeeper** pour valider les manifests avant synchronisation
+- Couplez avec **Argo Rollouts** pour des déploiements canary/blue-green
+- Multi-cluster : un ArgoCD central qui déploie sur N clusters via ApplicationSet generator `clusters`
