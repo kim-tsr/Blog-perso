@@ -3,6 +3,7 @@
 import { revalidatePath } from 'next/cache'
 import { redirect } from 'next/navigation'
 import { requireAdminClient, slugify } from '@/lib/admin'
+import { logAdminAction } from '@/lib/audit'
 
 function parse(formData: FormData) {
   const label = (formData.get('label') as string)?.trim() ?? ''
@@ -21,8 +22,8 @@ export async function createCategory(formData: FormData) {
   if (!data.label || !data.slug) return { ok: false, error: 'Label et slug requis' }
   const { error } = await supabase.from('categories').insert(data)
   if (error) return { ok: false, error: error.message }
+  await logAdminAction('category.created', 'category', data.slug, { label: data.label })
   revalidatePath('/admin/categories')
-  revalidatePath('/blog')
   redirect('/admin/categories')
 }
 
@@ -35,14 +36,14 @@ export async function updateCategory(slug: string, formData: FormData) {
     .update({ label: data.label, description: data.description, theme: data.theme, display_order: data.display_order })
     .eq('slug', slug)
   if (error) return { ok: false, error: error.message }
+  await logAdminAction('category.updated', 'category', slug, { label: data.label })
   revalidatePath('/admin/categories')
-  revalidatePath('/blog')
   redirect('/admin/categories')
 }
 
 export async function deleteCategory(slug: string) {
   const { supabase } = await requireAdminClient()
   await supabase.from('categories').delete().eq('slug', slug)
+  await logAdminAction('category.deleted', 'category', slug)
   revalidatePath('/admin/categories')
-  revalidatePath('/blog')
 }

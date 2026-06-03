@@ -16,6 +16,7 @@ interface Props {
     live_url: string | null
     display_order: number
     published: boolean
+    scheduled_for?: string | null
   }
   action: (formData: FormData) => Promise<{ ok: boolean; error?: string } | void>
   onDelete?: () => Promise<void>
@@ -111,10 +112,22 @@ export default function ProjectForm({ categories, initial, action, onDelete, mod
         <input name="display_order" className="pf-input mono" type="number" defaultValue={initial?.display_order ?? 0} />
       </div>
 
-      <label className="pf-check">
-        <input type="checkbox" name="published" defaultChecked={initial?.published ?? true} />
-        Publier
-      </label>
+      <div className="pf-row">
+        <label className="pf-check">
+          <input type="checkbox" name="published" defaultChecked={initial?.published ?? true} />
+          Publier maintenant
+        </label>
+        <div className="pf-field">
+          <label className="pf-label" htmlFor="scheduled_for">Publier le · (optionnel)</label>
+          <input
+            id="scheduled_for"
+            name="scheduled_for"
+            type="datetime-local"
+            className="pf-input mono"
+            defaultValue={initial?.scheduled_for ? new Date(initial.scheduled_for).toISOString().slice(0, 16) : ''}
+          />
+        </div>
+      </div>
 
       <div className="pf-actions">
         <div style={{ display:'flex', gap:10, flexWrap:'wrap' }}>

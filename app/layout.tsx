@@ -35,6 +35,10 @@ export const metadata: Metadata = {
 export default function RootLayout({ children }: { children: React.ReactNode }) {
   return (
     <html lang="fr" className={`${spaceGrotesk.variable} ${figtree.variable} ${spaceMono.variable}`}>
+      <head>
+        {/* Anti-FOUC: resolve theme before first paint */}
+        <script dangerouslySetInnerHTML={{ __html: `(function(){try{var m=localStorage.getItem('theme')||'system';var r=m==='system'?(window.matchMedia('(prefers-color-scheme: dark)').matches?'dark':'light'):m;document.documentElement.setAttribute('data-theme',r);document.documentElement.dataset.themeMode=m;}catch(e){}})();` }} />
+      </head>
       <body>
         <a href="#main" className="skip-link">Aller au contenu</a>
         <CustomCursor />

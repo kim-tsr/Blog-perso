@@ -12,13 +12,14 @@ interface Row {
   year: string | null
   published: boolean
   display_order: number
+  scheduled_for: string | null
 }
 
 export default async function AdminProjectsPage() {
   const { supabase } = await requireAdminClient()
   const { data } = await supabase
     .from('projects')
-    .select('id, title, category_slug, status, year, published, display_order')
+    .select('id, title, category_slug, status, year, published, display_order, scheduled_for')
     .order('display_order', { ascending: true })
   const rows = (data ?? []) as Row[]
 
@@ -66,7 +67,23 @@ export default async function AdminProjectsPage() {
                   <td><span className={`pj-st ${p.status}`}>{p.status}</span></td>
                   <td><span style={{ fontFamily:'var(--fm)', fontSize:11 }}>{p.year ?? '—'}</span></td>
                   <td><span style={{ fontFamily:'var(--fm)', fontSize:11 }}>{p.display_order}</span></td>
-                  <td><span style={{ fontFamily:'var(--fm)', fontSize:10, color: p.published ? 'var(--c)' : 'var(--dim)', letterSpacing:'.1em', textTransform:'uppercase' }}>{p.published ? 'publié' : 'brouillon'}</span></td>
+                  <td>
+                    {(() => {
+                      const scheduled = !p.published && p.scheduled_for && new Date(p.scheduled_for) > new Date()
+                      const color = p.published ? 'var(--c)' : scheduled ? 'var(--a)' : 'var(--dim)'
+                      const label = p.published ? 'publié' : scheduled ? 'programmé' : 'brouillon'
+                      return (
+                        <>
+                          <span style={{ fontFamily:'var(--fm)', fontSize:10, color, letterSpacing:'.1em', textTransform:'uppercase' }}>{label}</span>
+                          {scheduled && p.scheduled_for && (
+                            <span style={{ display:'block', fontFamily:'var(--fm)', fontSize:10, color:'var(--dim)', marginTop:3 }}>
+                              {new Date(p.scheduled_for).toLocaleString('fr-FR', { day:'2-digit', month:'short', hour:'2-digit', minute:'2-digit' })}
+                            </span>
+                          )}
+                        </>
+                      )
+                    })()}
+                  </td>
                   <td style={{ textAlign:'right' }}>
                     <Link href={`/admin/projects/${p.id}/edit`} className="pj-act">Éditer</Link>
                   </td>

@@ -30,7 +30,7 @@ export default function CustomCursor() {
       <div ref={dot} id="cur-dot" aria-hidden="true" style={{
         position:'fixed', width:6, height:6, borderRadius:'50%',
         background:'#fff', pointerEvents:'none', zIndex:9999,
-        transform:'translate(-50%,-50%)', mixBlendMode:'difference',
+        transform:'translate(-50%,-50%)', mixBlendMode:'difference' as const,
         transition:'transform .15s',
       }} />
       <div ref={ring} id="cur-ring" aria-hidden="true" style={{

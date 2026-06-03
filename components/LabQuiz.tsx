@@ -9,16 +9,19 @@ interface Props {
   questions: QuizQuestion[]
   alreadyCompleted: boolean
   onComplete: (formData: FormData) => Promise<void>
+  onSubmitAttempt?: (slug: string, score: number, max: number) => Promise<{ ok: boolean; first_try?: boolean; passed?: boolean }>
+  previousBest?: { best: number; max: number; attempts: number } | null
   themeColor: string
 }
 
-export default function LabQuiz({ slug, questions, alreadyCompleted, onComplete, themeColor }: Props) {
+export default function LabQuiz({ slug, questions, alreadyCompleted, onComplete, onSubmitAttempt, previousBest, themeColor }: Props) {
   const router = useRouter()
   const [pending, startTransition] = useTransition()
   const [step, setStep] = useState(0)
   const [answers, setAnswers] = useState<(number | null)[]>(() => questions.map(() => null))
   const [revealed, setRevealed] = useState<boolean[]>(() => questions.map(() => false))
   const [done, setDone] = useState(false)
+  const [attemptLogged, setAttemptLogged] = useState(false)
 
   const total = questions.length
   const q = questions[step]
@@ -42,6 +45,11 @@ export default function LabQuiz({ slug, questions, alreadyCompleted, onComplete,
       setStep(s => s + 1)
     } else {
       setDone(true)
+      if (onSubmitAttempt && !attemptLogged) {
+        setAttemptLogged(true)
+        const finalScore = answers.filter((a, i) => a === questions[i].correct).length
+        onSubmitAttempt(slug, finalScore, total).catch(() => {})
+      }
     }
   }
 
@@ -68,8 +76,8 @@ export default function LabQuiz({ slug, questions, alreadyCompleted, onComplete,
         <div className="lq-done-pill">
           <span className="lq-done-tick">✓</span>
           <div>
-            <div className="lq-done-text">Quiz validé</div>
-            <div className="lq-done-sub">// Tu as déjà répondu correctement à toutes les questions</div>
+            <div className="lq-done-text">Quiz validé{previousBest ? ` · ${previousBest.best}/${previousBest.max}` : ''}</div>
+            <div className="lq-done-sub">// {previousBest ? `${previousBest.attempts} tentative${previousBest.attempts > 1 ? 's' : ''} enregistrée${previousBest.attempts > 1 ? 's' : ''}` : 'Tu as déjà répondu correctement à toutes les questions'}</div>
           </div>
         </div>
       </div>

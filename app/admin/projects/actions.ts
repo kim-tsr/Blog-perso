@@ -3,6 +3,7 @@
 import { revalidatePath } from 'next/cache'
 import { redirect } from 'next/navigation'
 import { requireAdminClient } from '@/lib/admin'
+import { logAdminAction } from '@/lib/audit'
 
 function parseTags(raw: string | null): string[] {
   if (!raw) return []
@@ -10,6 +11,7 @@ function parseTags(raw: string | null): string[] {
 }
 
 function parse(formData: FormData) {
+  const scheduledRaw = (formData.get('scheduled_for') as string | null)?.trim() || ''
   return {
     title:         (formData.get('title') as string)?.trim() ?? '',
     description:   (formData.get('description') as string)?.trim() ?? '',
@@ -21,6 +23,7 @@ function parse(formData: FormData) {
     live_url:      (formData.get('live_url') as string)?.trim() || null,
     display_order: parseInt((formData.get('display_order') as string) || '0', 10),
     published:     formData.get('published') === 'on',
+    scheduled_for: scheduledRaw ? new Date(scheduledRaw).toISOString() : null,
   }
 }
 
@@ -30,6 +33,7 @@ export async function createProject(formData: FormData) {
   if (!data.title || !data.description) return { ok: false, error: 'Titre et description requis' }
   const { error } = await supabase.from('projects').insert(data)
   if (error) return { ok: false, error: error.message }
+  await logAdminAction('project.created', 'project', data.title, { status: data.status })
   revalidatePath('/admin/projects')
   revalidatePath('/projets')
   redirect('/admin/projects')
@@ -40,6 +44,7 @@ export async function updateProject(id: string, formData: FormData) {
   const data = parse(formData)
   const { error } = await supabase.from('projects').update(data).eq('id', id)
   if (error) return { ok: false, error: error.message }
+  await logAdminAction('project.updated', 'project', id, { title: data.title, status: data.status })
   revalidatePath('/admin/projects')
   revalidatePath('/projets')
   redirect('/admin/projects')
@@ -48,6 +53,7 @@ export async function updateProject(id: string, formData: FormData) {
 export async function deleteProject(id: string) {
   const { supabase } = await requireAdminClient()
   await supabase.from('projects').delete().eq('id', id)
+  await logAdminAction('project.deleted', 'project', id)
   revalidatePath('/admin/projects')
   revalidatePath('/projets')
 }

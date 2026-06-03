@@ -3,17 +3,18 @@ import { useEffect, useRef } from 'react'
 import Link from 'next/link'
 import { usePathname } from 'next/navigation'
 import UserMenu from './UserMenu'
+import SearchPalette from './SearchPalette'
 import { Profile } from '@/lib/auth'
+import type { LabMeta } from '@/lib/labs'
 
 const LINKS = [
-  { href: '/blog',      label: 'Blog' },
   { href: '/labs',      label: 'Labs' },
+  { href: '/roadmap',   label: 'Parcours' },
   { href: '/projets',   label: 'Projets' },
-  { href: '/roadmap',   label: 'Roadmap' },
   { href: '/a-propos',  label: 'À propos' },
 ]
 
-export default function NavClient({ profile }: { profile: Profile | null }) {
+export default function NavClient({ profile, labs }: { profile: Profile | null; labs: LabMeta[] }) {
   const nav = useRef<HTMLElement>(null)
   const pathname = usePathname()
 
@@ -30,7 +31,7 @@ export default function NavClient({ profile }: { profile: Profile | null }) {
       justifyContent: 'space-between', transition: 'background .4s, backdrop-filter .4s',
     }}>
       <style>{`
-        nav#nav.scrolled { background: rgba(7,7,12,0.75); backdrop-filter: blur(24px); border-bottom: 1px solid var(--border); }
+        nav#nav.scrolled { background: color-mix(in srgb, var(--bg) 75%, transparent); backdrop-filter: blur(24px); border-bottom: 1px solid var(--border); }
         .nav-links { display: flex; gap: 28px; list-style: none; }
         .nav-links a { font-size: 13px; font-weight: 500; color: var(--dim); transition: color .2s; position: relative; padding-bottom: 2px; }
         .nav-links a::after { content: ''; position: absolute; bottom: -2px; left: 0; width: 100%; height: 1px; background: var(--v); transform: scaleX(0); transition: transform .25s var(--ease); }
@@ -53,7 +54,10 @@ export default function NavClient({ profile }: { profile: Profile | null }) {
           </li>
         ))}
       </ul>
-      <UserMenu profile={profile} />
+      <div style={{ display:'flex', alignItems:'center', gap:14 }}>
+        <SearchPalette labs={labs} />
+        <UserMenu profile={profile} />
+      </div>
     </nav>
   )
 }

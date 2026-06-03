@@ -17,6 +17,7 @@ interface Row {
   live_url: string | null
   display_order: number
   published: boolean
+  scheduled_for: string | null
 }
 
 export default async function EditProjectPage({ params }: { params: Promise<{ id: string }> }) {
@@ -51,6 +52,7 @@ export default async function EditProjectPage({ params }: { params: Promise<{ id
           live_url:      p.live_url,
           display_order: p.display_order,
           published:     p.published,
+          scheduled_for: p.scheduled_for,
         }}
       />
     </div>

@@ -1,11 +1,9 @@
 import type { UserProgress } from '@/lib/progress'
 import type { LabMeta } from '@/lib/labs'
-import type { ArticleMeta } from '@/lib/theme'
 
 interface Props {
   progress: UserProgress
   allLabs: LabMeta[]
-  allArticles: ArticleMeta[]
 }
 
 interface Achievement {
@@ -18,7 +16,7 @@ interface Achievement {
   progress?: { current: number; target: number }
 }
 
-function computeAchievements(p: UserProgress, labs: LabMeta[], articles: ArticleMeta[]): Achievement[] {
+function computeAchievements(p: UserProgress, labs: LabMeta[]): Achievement[] {
   const completedSlugs = new Set(p.labs.filter(l => l.status === 'completed').map(l => l.lab_slug))
   const completedLabs = labs.filter(l => completedSlugs.has(l.slug))
   const completedTags = new Set(completedLabs.map(l => l.tag))
@@ -30,8 +28,26 @@ function computeAchievements(p: UserProgress, labs: LabMeta[], articles: Article
   const homelabSeries = labs.filter(l => l.series === 'homelab-from-zero')
   const homelabCompleted = homelabSeries.filter(l => completedSlugs.has(l.slug)).length
 
-  const articleReads = p.summary.articles_read
   const labsDone = p.summary.labs_completed
+
+  // Séries Linux hardening
+  const linuxSeries = labs.filter(l => l.series === 'linux-hardening-from-zero')
+  const linuxCompleted = linuxSeries.filter(l => completedSlugs.has(l.slug)).length
+
+  // Quiz : best score 100% sur premier essai
+  const quizzes = p.quizzes ?? []
+  const firstTryPerfectCount = quizzes.filter(q => q.first_try_perfect).length
+  // Une "série de quiz maîtrisée" = toutes les questions de tous les labs d'une série passées (best = max)
+  const seriesQuizMastered = (seriesSlug: string): boolean => {
+    const slugs = labs.filter(l => l.series === seriesSlug && l.slug).map(l => l.slug)
+    if (slugs.length === 0) return false
+    return slugs.every(s => {
+      const q = quizzes.find(qq => qq.lab_slug === s)
+      return q && q.best_score === q.max_score
+    })
+  }
+  const anyMasteredSeries = ['api-securisee-from-zero', 'homelab-from-zero', 'linux-hardening-from-zero']
+    .some(seriesQuizMastered)
 
   return [
     {
@@ -69,15 +85,15 @@ function computeAchievements(p: UserProgress, labs: LabMeta[], articles: Article
       unlocked: labsDone >= 10,
       progress: { current: Math.min(labsDone, 10), target: 10 },
     },
-    {
-      id: 'lecteur',
-      title: 'Lecteur assidu',
-      description: 'Lire 5 articles',
-      icon: '📖',
-      color: 'c',
-      unlocked: articleReads >= 5,
-      progress: { current: Math.min(articleReads, 5), target: 5 },
-    },
+    ...(linuxSeries.length > 0 ? [{
+      id: 'series-linux',
+      title: 'Linux hardener',
+      description: `Compléter la série « Linux hardening from zero » (${linuxCompleted}/${linuxSeries.length})`,
+      icon: '🐧',
+      color: 'c' as const,
+      unlocked: linuxCompleted === linuxSeries.length && linuxSeries.length > 0,
+      progress: { current: linuxCompleted, target: linuxSeries.length },
+    }] : []),
     {
       id: 'all-tags',
       title: 'Touche-à-tout',
@@ -115,6 +131,23 @@ function computeAchievements(p: UserProgress, labs: LabMeta[], articles: Article
       progress: { current: homelabCompleted, target: homelabSeries.length },
     }] : []),
     {
+      id: 'quiz-perfect',
+      title: 'Quiz parfait',
+      description: 'Réussir un quiz à 100 % dès la première tentative',
+      icon: '🎓',
+      color: 'v',
+      unlocked: firstTryPerfectCount >= 1,
+      progress: firstTryPerfectCount >= 1 ? undefined : { current: 0, target: 1 },
+    },
+    {
+      id: 'quiz-series',
+      title: 'Série maîtrisée',
+      description: 'Avoir 100 % à tous les quiz d\'une série complète',
+      icon: '🥇',
+      color: 'c',
+      unlocked: anyMasteredSeries,
+    },
+    {
       id: 'completionist',
       title: 'Complétiste',
       description: `Terminer tous les labs disponibles (${labsDone}/${labs.length})`,
@@ -126,8 +159,8 @@ function computeAchievements(p: UserProgress, labs: LabMeta[], articles: Article
   ]
 }
 
-export default function AchievementsSection({ progress, allLabs, allArticles }: Props) {
-  const achievements = computeAchievements(progress, allLabs, allArticles)
+export default function AchievementsSection({ progress, allLabs }: Props) {
+  const achievements = computeAchievements(progress, allLabs)
   const unlockedCount = achievements.filter(a => a.unlocked).length
 
   return (

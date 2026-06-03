@@ -7,28 +7,30 @@ export const metadata: Metadata = { title: 'Admin · dev.sec.ops' }
 async function counts() {
   const supabase = createPublicClient()
   if (!supabase) return null
-  const [arts, labs, projs, cats, codes] = await Promise.all([
-    supabase.from('articles').select('id', { count: 'exact', head: true }),
+  const [labs, projs, cats, codes, users] = await Promise.all([
     supabase.from('labs').select('id', { count: 'exact', head: true }),
     supabase.from('projects').select('id', { count: 'exact', head: true }),
     supabase.from('categories').select('slug', { count: 'exact', head: true }),
     supabase.from('access_codes').select('code', { count: 'exact', head: true }),
+    supabase.from('profiles').select('id', { count: 'exact', head: true }),
   ])
   return {
-    articles:   arts.count   ?? 0,
     labs:       labs.count   ?? 0,
     projects:   projs.count  ?? 0,
     categories: cats.count   ?? 0,
     codes:      codes.count  ?? 0,
+    users:      users.count  ?? 0,
   }
 }
 
 const CARDS = [
-  { href: '/admin/articles',   title: 'Articles',   desc: 'Rédigez, gardez gated, publiez vos tutoriels.',         accent: 'var(--v)', code: '01' },
-  { href: '/admin/labs',       title: 'Labs',       desc: 'Exercices pratiques avec objectif et prérequis.',       accent: 'var(--c)', code: '02' },
-  { href: '/admin/projects',   title: 'Projets',    desc: 'Portfolio open-source et outils maison.',                accent: 'var(--a)', code: '03' },
-  { href: '/admin/categories', title: 'Catégories', desc: 'Rubriques transverses du blog.',                         accent: 'var(--v)', code: '04' },
-  { href: '/admin/codes',      title: 'Codes',      desc: 'Codes d\'invitation pour upgrader des utilisateurs.',   accent: 'var(--c)', code: '05' },
+  { href: '/admin/labs',       title: 'Labs',         desc: 'Cours pratiques avec théorie, code et quiz.',          accent: 'var(--c)', code: '01' },
+  { href: '/admin/projects',   title: 'Projets',      desc: 'Portfolio open-source et outils maison.',              accent: 'var(--a)', code: '02' },
+  { href: '/admin/categories', title: 'Catégories',   desc: 'Rubriques transverses.',                               accent: 'var(--v)', code: '03' },
+  { href: '/admin/codes',      title: 'Codes',        desc: 'Codes d\'invitation pour upgrader des utilisateurs.', accent: 'var(--c)', code: '04' },
+  { href: '/admin/users',      title: 'Utilisateurs', desc: 'Rôles, activité, audit des comptes.',                 accent: 'var(--v)', code: '05' },
+  { href: '/admin/newsletter', title: 'Newsletter',   desc: 'Abonnés, double opt-in, export CSV.',                 accent: 'var(--c)', code: '06' },
+  { href: '/admin/comments',  title: 'Commentaires', desc: 'Modérer les commentaires postés sur les labs.',        accent: 'var(--a)', code: '07' },
 ]
 
 export default async function AdminDashboard() {
@@ -70,11 +72,11 @@ export default async function AdminDashboard() {
 
       {c && (
         <div className="adh-stats">
-          <div className="adh-stat"><div className="adh-stat-num">{c.articles}</div><div className="adh-stat-label">Articles</div></div>
           <div className="adh-stat"><div className="adh-stat-num">{c.labs}</div><div className="adh-stat-label">Labs</div></div>
           <div className="adh-stat"><div className="adh-stat-num">{c.projects}</div><div className="adh-stat-label">Projets</div></div>
           <div className="adh-stat"><div className="adh-stat-num">{c.categories}</div><div className="adh-stat-label">Catégories</div></div>
           <div className="adh-stat"><div className="adh-stat-num">{c.codes}</div><div className="adh-stat-label">Codes</div></div>
+          <div className="adh-stat"><div className="adh-stat-num">{c.users}</div><div className="adh-stat-label">Users</div></div>
         </div>
       )}
 

@@ -3,6 +3,10 @@ import { useEffect, useRef } from 'react'
 
 interface Pt { x: number; y: number; vx: number; vy: number; r: number }
 
+function isLightTheme() {
+  return document.documentElement.getAttribute('data-theme') === 'light'
+}
+
 export default function HeroCanvas() {
   const cv = useRef<HTMLCanvasElement>(null)
 
@@ -27,6 +31,13 @@ export default function HeroCanvas() {
     let raf: number
     const draw = () => {
       ctx.clearRect(0, 0, W, H)
+      const light = isLightTheme()
+      // In light mode use darker violet tones and reduced alpha so particles
+      // remain visible without oversaturating the warm off-white background.
+      const lineAlphaMax = light ? 0.10 : 0.18
+      const dotColor     = light ? 'rgba(90,50,180,' : 'rgba(168,140,255,'
+      const dotAlpha     = light ? 0.25 : 0.40
+
       pts.forEach(p => {
         p.x += p.vx; p.y += p.vy
         if (p.x < 0 || p.x > W) p.vx *= -1
@@ -41,7 +52,7 @@ export default function HeroCanvas() {
           const d = Math.hypot(dx, dy)
           if (d < DIST) {
             ctx.beginPath()
-            ctx.strokeStyle = `rgba(168,140,255,${(1 - d/DIST) * 0.18})`
+            ctx.strokeStyle = `rgba(${light ? '90,50,180' : '168,140,255'},${(1 - d/DIST) * lineAlphaMax})`
             ctx.lineWidth = .7
             ctx.moveTo(pts[i].x, pts[i].y); ctx.lineTo(pts[j].x, pts[j].y)
             ctx.stroke()
@@ -50,7 +61,7 @@ export default function HeroCanvas() {
       }
       pts.forEach(p => {
         ctx.beginPath(); ctx.arc(p.x, p.y, p.r, 0, Math.PI*2)
-        ctx.fillStyle = 'rgba(168,140,255,0.4)'; ctx.fill()
+        ctx.fillStyle = `${dotColor}${dotAlpha})`; ctx.fill()
       })
       raf = requestAnimationFrame(draw)
     }

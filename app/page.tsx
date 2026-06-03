@@ -1,8 +1,7 @@
-import { getAllArticleMeta } from '@/lib/articles'
 import { getAllLabMeta } from '@/lib/labs'
 import Hero from '@/components/Hero'
 import GatewayCards from '@/components/GatewayCards'
-import FeaturedArticle from '@/components/FeaturedArticle'
+import FeaturedLab from '@/components/FeaturedLab'
 import Contact from '@/components/Contact'
 import Footer from '@/components/Footer'
 import SideNav from '@/components/SideNav'
@@ -11,15 +10,16 @@ import RoadmapPreview from '@/components/RoadmapPreview'
 import LabsPreview from '@/components/LabsPreview'
 
 export default async function Home() {
-  const articles = await getAllArticleMeta()
   const labs = await getAllLabMeta()
-  const featured = articles[0]
+  const featured = labs[0]
+
+  const seriesCount = new Set(labs.filter(l => l.series).map(l => l.series)).size
 
   const stats = [
-    { num: String(articles.length), label: 'Articles publiés', detail: 'Et la roadmap s\'étend.', color: 'var(--v)' },
-    { num: String(labs.length),     label: 'Labs pratiques',   detail: 'Pour passer à l\'action.', color: 'var(--c)' },
-    { num: '6',                     label: 'Projets actifs',   detail: 'Open-source & homelab.',   color: 'var(--a)' },
-    { num: '1/sem',                 label: 'Rythme',           detail: 'Un nouvel article / semaine.', color: 'var(--text)' },
+    { num: String(labs.length),    label: 'Labs publiés',  detail: 'Théorie + pratique + quiz.', color: 'var(--c)' },
+    { num: String(seriesCount),    label: 'Parcours',      detail: 'Séries de labs chaînés.',     color: 'var(--v)' },
+    { num: '6',                    label: 'Projets actifs', detail: 'Open-source & homelab.',     color: 'var(--a)' },
+    { num: '1/sem',                label: 'Rythme',         detail: 'Un nouveau lab / semaine.',   color: 'var(--text)' },
   ]
 
   return (
@@ -31,7 +31,7 @@ export default async function Home() {
         <div className="beam-sep" aria-hidden="true" />
         <HomeStats stats={stats} />
         <div className="beam-sep" aria-hidden="true" />
-        {featured && <FeaturedArticle article={featured} />}
+        {featured && <FeaturedLab lab={featured} />}
         <div className="beam-sep" aria-hidden="true" />
         <LabsPreview labs={labs} />
         <div className="beam-sep" aria-hidden="true" />

@@ -1,0 +1,328 @@
+---
+title: "eBPF from zero : tracer le kernel sans le toucher"
+slug: ebpf-from-zero
+objective: "Comprendre ce qu'est eBPF, écrire un premier programme avec bpftrace, tracer des syscalls et événements TCP, et savoir quand l'utiliser au lieu d'un agent userspace."
+tag: Infrastructure
+theme: violet
+difficulty: intermédiaire
+duration: "55 min"
+minRole: pro
+prerequisites:
+  - "Linux ≥ 5.4 (Ubuntu 22.04+, Debian 12+, kernel récent)"
+  - "Bases de la ligne de commande"
+tools:
+  - "bpftrace"
+  - "bpftool"
+  - "perf"
+quiz:
+  - question: "Qu'est-ce qu'eBPF ?"
+    options:
+      - "Un nouveau langage de scripting"
+      - "Une machine virtuelle dans le kernel Linux : tu charges des petits programmes (BPF bytecode) qui s'exécutent en kernel-side pour observer/modifier le comportement (réseau, tracing, sécurité) sans patcher ni recompiler"
+      - "Un fork du kernel Linux"
+      - "Un module kernel optionnel"
+    correct: 1
+    explanation: "eBPF (extended Berkeley Packet Filter) = VM RISC-like dans le kernel + vérificateur statique qui prouve que le programme termine, ne déréférence pas de NULL, etc. Tu attaches ces programmes à des hooks (kprobes, tracepoints, XDP, cgroup, LSM...). C'est devenu LE mécanisme d'extension kernel."
+  - question: "Pourquoi bpftrace est-il l'entrée privilégiée vers eBPF ?"
+    options:
+      - "Il est plus rapide"
+      - "Il abstrait la complexité (compile/load/attach/maps) derrière une syntaxe DSL à la awk — tu écris une ligne, ça marche. Idéal pour explorer/débugger, alors que C+libbpf est pour les outils permanents"
+      - "C'est le seul outil eBPF"
+      - "Il évite le vérificateur"
+    correct: 1
+    explanation: "Workflow : bpftrace pour PROTOTYPE rapide (10 secondes de prod observation). Si la sonde devient permanente : portage en C/Rust/Go + libbpf. C'est le même rapport que python REPL vs application compilée."
+  - question: "Quelle est la différence entre 'kprobe' et 'tracepoint' ?"
+    options:
+      - "Aucune"
+      - "tracepoint = points d'instrumentation STABLES définis par les devs kernel (interface publique, garantis entre versions). kprobe = hook DYNAMIQUE sur N'IMPORTE QUELLE fonction kernel (puissant mais instable entre versions)"
+      - "kprobe est obsolète"
+      - "tracepoint est pour Windows"
+    correct: 1
+    explanation: "Préférence : tracepoint quand il existe (stabilité). kprobe quand tu veux instrumenter une fonction interne sans tracepoint. uprobe = équivalent pour binaires userspace. USDT = tracepoints userspace définis par l'app (postgres, mysql, jvm)."
+  - question: "Pourquoi le 'verifier' eBPF est-il essentiel à la sécurité ?"
+    options:
+      - "Il valide la syntaxe"
+      - "Avant chargement, il analyse statiquement le programme et REFUSE tout ce qui peut planter le kernel : déréférences NULL, boucles non bornées, lectures hors-borne, mauvais types. Sans lui, eBPF serait un module kernel sans filet"
+      - "Il chiffre le programme"
+      - "Il est optionnel"
+    correct: 1
+    explanation: "Le verifier prouve : terminaison (pas de boucle infinie : <1M instructions par défaut), sûreté mémoire (chaque accès vérifié), types (CO-RE), sécurité (pas de leak de pointers kernel vers userspace). Sans ça, un BPF buggué crasherait le kernel. C'est pourquoi BPF s'est imposé alors que les modules kernel sont devenus rares."
+  - question: "Quand préférer un agent userspace à eBPF ?"
+    options:
+      - "Toujours"
+      - "Quand la complexité métier dépasse les contraintes du vérificateur (boucles non bornées, parsing complexe, état lourd). eBPF excelle sur 'observer + filtrer hot path', mal sur 'workflow complexe'"
+      - "Jamais"
+      - "Sur les kernels récents"
+    correct: 1
+    explanation: "eBPF est petit, rapide, attaché à un hook. Bon pour : drop packet par IP, compter syscalls, observer latence. Mauvais pour : parser HTTP/2 complet, agréger sur 24h avec ML, calculs lourds. Pattern courant : eBPF observe + envoie au userspace via perf ring buffer, userspace fait le métier."
+---
+
+## 🧠 Théorie : eBPF en 90 secondes
+
+```
+   AVANT eBPF                          APRÈS eBPF
+   ─────────                           ─────────
+   
+   Besoin d'instrumenter le réseau ?   Tu écris un programme BPF.
+                                       
+   → Patch le kernel + recompile        Le kernel le compile JIT,
+   → OU écrire un module kernel         le vérifie, l'attache à un hook.
+   → OU agent userspace lent            Tourne dans le kernel,
+     (copies de paquets)                à vitesse kernel.
+   
+   Cycle: jours/semaines              Cycle: secondes
+   Risque: crash kernel               Risque: refusé par verifier
+   Distribué: difficile               Distribué: 1 binaire
+```
+
+### Architecture
+
+```
+   ┌──────────────────────────────────────────┐
+   │           PROGRAMME eBPF                  │
+   │   (BPF bytecode, compilé via clang/llvm)  │
+   └────────────────┬─────────────────────────┘
+                    │ load via libbpf
+                    ▼
+   ┌──────────────────────────────────────────┐
+   │           VERIFIER (kernel)               │
+   │   - termination, bounds, types            │
+   │   - REFUSE si pas prouvé sûr              │
+   └────────────────┬─────────────────────────┘
+                    │ ok
+                    ▼
+   ┌──────────────────────────────────────────┐
+   │           JIT COMPILER (kernel)           │
+   │   - BPF bytecode → x86_64/arm64 native    │
+   └────────────────┬─────────────────────────┘
+                    │
+                    ▼
+   ┌──────────────────────────────────────────┐
+   │       HOOK ATTACHMENT (kernel)            │
+   │   kprobe / uprobe / tracepoint / XDP      │
+   │   socket / cgroup / LSM / sched / ...     │
+   └──────────────────────────────────────────┘
+```
+
+### Catégories de hooks
+
+| Hook | Quand | Cas d'usage |
+|---|---|---|
+| **kprobe / kretprobe** | Avant/après une fonction kernel | Tracing dynamique |
+| **tracepoint** | Points marqués par les devs kernel | Tracing stable |
+| **uprobe / USDT** | Fonction userspace | Profile postgres, jvm |
+| **XDP** | Très tôt dans la pile réseau (NIC driver) | Drop DDoS, load balance |
+| **TC** | Traffic control (qdisc) | Filtrage, rewrite paquet |
+| **socket filter** | À l'entrée socket | tcpdump, Cilium policies |
+| **cgroup** | Sur cgroup (skb, sock_create...) | Per-pod policies |
+| **LSM** | Hook Linux Security Module | Politique d'accès dynamique |
+| **perf event** | Sample CPU, cache miss | Profiling |
+| **sched** | Events scheduler (sched_switch) | Latency tracing |
+
+## 🎯 Objectif
+
+1. Installer bpftrace.
+2. Écrire 5 one-liners utiles.
+3. Comprendre les maps + ring buffers (échange kernel ↔ userspace).
+4. Mesurer l'impact (latence ajoutée par les sondes).
+
+## 📋 Étape 1 — Installation
+
+```bash
+# Debian/Ubuntu
+sudo apt install bpftrace bpftool linux-headers-$(uname -r)
+
+# Vérifier le kernel
+bpftrace --version
+bpftrace -l 'tracepoint:syscalls:sys_enter_*' | head
+# → tu vois la liste des tracepoints syscalls disponibles
+```
+
+## 📋 Étape 2 — Hello world
+
+```bash
+# Tous les open() / openat() de tous les processes
+sudo bpftrace -e 'tracepoint:syscalls:sys_enter_openat
+                  { printf("%s -> %s\n", comm, str(args->filename)); }'
+```
+
+→ flux en direct des fichiers ouverts par tous les processes. C'est `opensnoop` en 1 ligne.
+
+`Ctrl+C` pour arrêter.
+
+## 📋 Étape 3 — 5 one-liners utiles
+
+### 1. Top processes par syscalls/s
+
+```bash
+sudo bpftrace -e 'tracepoint:raw_syscalls:sys_enter
+                  { @[comm] = count(); }
+                  interval:s:10 { exit(); }'
+```
+
+→ après 10 secondes, top des commandes par nombre de syscalls. Utile pour repérer un process baveux.
+
+### 2. Latence des reads bloquants
+
+```bash
+sudo bpftrace -e '
+kprobe:vfs_read { @start[tid] = nsecs; }
+kretprobe:vfs_read /@start[tid]/
+  { @us = hist((nsecs - @start[tid]) / 1000); delete(@start[tid]); }
+'
+```
+
+→ histogramme des durées de `vfs_read` en microsecondes. Tu vois la queue de latence.
+
+### 3. Connexions TCP outbound
+
+```bash
+sudo bpftrace -e '
+kprobe:tcp_connect {
+  $sk = (struct sock *)arg0;
+  $dst = ntop($sk->__sk_common.skc_daddr);
+  $port = ($sk->__sk_common.skc_dport >> 8) | ($sk->__sk_common.skc_dport << 8) & 0xffff;
+  printf("%s -> %s:%d\n", comm, $dst, $port);
+}'
+```
+
+→ équivalent `tcpconnect` du BCC project. Idéal pour repérer une connexion C2 surprise.
+
+### 4. Fichiers les + ouverts
+
+```bash
+sudo bpftrace -e 'tracepoint:syscalls:sys_enter_openat
+                  { @[str(args->filename)] = count(); }
+                  interval:s:30 { exit(); print(@, 10); clear(@); }'
+```
+
+### 5. Process tués par OOM
+
+```bash
+sudo bpftrace -e 'kprobe:oom_kill_process
+                  { printf("OOM kill: %s (pid=%d)\n", comm, pid); }'
+```
+
+## 📋 Étape 4 — Comprendre les maps
+
+Les **maps** sont la structure de données partagée kernel ↔ userspace. Types principaux :
+
+```
+  hash       → table clé/valeur (équivalent dict)
+  array      → tableau index numérique
+  per-cpu    → un slot par CPU (évite contention)
+  lru-hash   → éviction LRU automatique
+  ringbuf    → ring buffer kernel→userspace (succès moderne)
+  perf_event → ring buffer (ancien)
+  prog_array → tail calls
+```
+
+Exemple : compteur global avec map array
+
+```bash
+sudo bpftrace -e '
+BEGIN { printf("Tracking openat...\n"); }
+tracepoint:syscalls:sys_enter_openat
+  { @count[uid] = count(); }
+END { print(@count); }
+'
+```
+
+→ après Ctrl+C, tu vois `@count[0]: 12340 / @count[1000]: 234 / ...`
+
+## 📋 Étape 5 — Quand passer au C / libbpf
+
+bpftrace est génial pour explorer. Pour un outil **permanent** distribué à des collègues, tu veux :
+
+- Pas de dépendance bpftrace en prod
+- Code typé, testé, CI/CD
+- Binaire unique
+- Symboles BTF embarqués (CO-RE)
+
+Stack moderne :
+- **C + libbpf** : la référence
+- **Rust + aya** : sécurité types, moderne
+- **Go + cilium/ebpf** : ergonomique, infra k8s
+
+Exemple minimal libbpf (skeleton) :
+
+```c
+// trace.bpf.c — programme BPF
+#include <vmlinux.h>
+#include <bpf/bpf_helpers.h>
+
+SEC("tracepoint/syscalls/sys_enter_openat")
+int handle_openat(struct trace_event_raw_sys_enter *ctx) {
+    bpf_printk("openat by pid %d\n", bpf_get_current_pid_tgid() >> 32);
+    return 0;
+}
+char LICENSE[] SEC("license") = "GPL";
+```
+
+Compilation :
+
+```bash
+clang -O2 -target bpf -c trace.bpf.c -o trace.bpf.o
+sudo bpftool prog load trace.bpf.o /sys/fs/bpf/trace
+sudo cat /sys/kernel/debug/tracing/trace_pipe
+```
+
+## 📋 Étape 6 — Impact perf
+
+```bash
+# Avant : pas de sonde
+hyperfine 'find /usr -name foo'
+
+# Pendant : sonde sur tous les openat (cher !)
+sudo bpftrace -e 'tracepoint:syscalls:sys_enter_openat { @ = count(); }' &
+hyperfine 'find /usr -name foo'
+
+# Sonde mieux ciblée (filtre par tid)
+sudo bpftrace -e 'tracepoint:syscalls:sys_enter_openat
+                  /comm == "find"/ { @ = count(); }' &
+```
+
+Règle empirique :
+- Sonde **sans filtre** sur un hot path : 5-50% overhead.
+- Sonde **avec filtre dès le début** : < 1%.
+
+## 🧠 Pitfalls
+
+❌ **`kprobe` sur fonction inlinée** : le kernel optimise certaines fonctions → kprobe absent. Vérifie avec `kprobe-list`.
+❌ **Boucle non bornée** → verifier refuse. Utilise `#pragma unroll` ou redessine.
+❌ **Toucher des pointers userspace direct** : `bpf_probe_read_user()`, jamais déréf direct.
+❌ **Penser que bpftrace = production** : ses overheads sont OK en debug, pas en hot path 24/7.
+❌ **Charger un BPF sans symboles BTF** : portabilité ratée. Active `CONFIG_DEBUG_INFO_BTF=y`.
+
+## 🔬 Validation
+
+```bash
+# 1. bpftrace fonctionne
+sudo bpftrace -e 'BEGIN { printf("hello bpf\n"); exit(); }'
+
+# 2. Une trace réelle
+sudo bpftrace -e 'tracepoint:sched:sched_process_exec
+                  { printf("%s exec\n", str(args->filename)); }'
+
+# 3. Inspecter les programmes chargés
+sudo bpftool prog list
+
+# 4. Inspecter les maps
+sudo bpftool map list
+```
+
+## 🚀 Pour aller plus loin
+
+- **BCC tools** : `/usr/share/bcc/tools/` → 100+ outils prêts à l'emploi (`opensnoop`, `tcpconnect`, `biolatency`, etc.)
+- **bpftrace book** (Brendan Gregg) : référence
+- **Cilium** : utilise eBPF massivement (CNI k8s + service mesh)
+- **Falco** : runtime security via eBPF (lab dédié)
+- **Tracee** (Aqua) : runtime threat detection 100% eBPF
+- **Tetragon** (Cilium) : enforcement + observability eBPF + LSM
+
+## 🚀 Pour pousser
+
+Combine avec la série **Linux hardening** :
+- Lab #1 systemd : bpftrace pour vérifier les syscalls qu'un service utilise → input pour SystemCallFilter
+- Lab #2 seccomp : utiliser eBPF pour mesurer l'overhead du filtre
+- Lab #4 auditd : Tetragon/Falco peuvent remplacer auditd avec moins d'overhead et plus d'expressivité

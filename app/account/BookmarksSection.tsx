@@ -1,22 +1,15 @@
 import Link from 'next/link'
 import type { BookmarkRow } from '@/lib/bookmarks'
-import type { ArticleMeta } from '@/lib/theme'
 import type { LabMeta } from '@/lib/labs'
-import { getThemeClasses } from '@/lib/theme'
 
 interface Props {
   bookmarks: BookmarkRow[]
-  allArticles: ArticleMeta[]
   allLabs: LabMeta[]
 }
 
-export default function BookmarksSection({ bookmarks, allArticles, allLabs }: Props) {
-  const articleMap = new Map(allArticles.map(a => [a.slug, a]))
+export default function BookmarksSection({ bookmarks, allLabs }: Props) {
   const labMap = new Map(allLabs.map(l => [l.slug, l]))
 
-  const articles = bookmarks.filter(b => b.content_type === 'article')
-    .map(b => ({ ...b, meta: articleMap.get(b.content_slug) }))
-    .filter(b => !!b.meta)
   const labs = bookmarks.filter(b => b.content_type === 'lab')
     .map(b => ({ ...b, meta: labMap.get(b.content_slug) }))
     .filter(b => !!b.meta)
@@ -84,34 +77,6 @@ export default function BookmarksSection({ bookmarks, allArticles, allLabs }: Pr
         </div>
       )}
 
-      {articles.length > 0 && (
-        <div className="bms-block">
-          <div className="bms-block-label">
-            <span>// articles</span>
-            <span className="bms-c">{articles.length}</span>
-          </div>
-          <div className="bms-list">
-            {articles.map(b => {
-              const { tc } = getThemeClasses(b.meta!.theme)
-              const col = tc === 'tv' ? 'var(--v)' : tc === 'tc' ? 'var(--c)' : 'var(--a)'
-              return (
-                <Link key={b.content_slug} href={`/articles/${b.content_slug}`} className="bms-item">
-                  <span className="bms-item-icon" style={{ color: col, background: `color-mix(in oklab, ${col} 12%, transparent)` }}>★</span>
-                  <div className="bms-item-body">
-                    <div className="bms-item-title">{b.meta!.title}</div>
-                    <div className="bms-item-meta">
-                      <span style={{ color: col }}>{b.meta!.tag}</span>
-                      <span>·</span>
-                      <span>sauvegardé {new Date(b.created_at).toLocaleDateString('fr-FR')}</span>
-                    </div>
-                  </div>
-                  <svg width="11" height="11" viewBox="0 0 11 11" fill="none" className="bms-item-arrow" aria-hidden="true"><path d="M2 5.5h7M6.5 3l3 2.5-3 2.5" stroke="currentColor" strokeWidth="1.5" strokeLinecap="round" strokeLinejoin="round"/></svg>
-                </Link>
-              )
-            })}
-          </div>
-        </div>
-      )}
     </section>
   )
 }

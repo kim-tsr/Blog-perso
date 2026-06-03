@@ -10,7 +10,6 @@ import AchievementsSection from './AchievementsSection'
 import BookmarksSection from './BookmarksSection'
 import { getUserProgress } from '@/lib/progress'
 import { getUserBookmarks } from '@/lib/bookmarks'
-import { getAllArticleMeta } from '@/lib/articles'
 import { getAllLabMeta } from '@/lib/labs'
 
 export const metadata: Metadata = {
@@ -29,9 +28,8 @@ export default async function AccountPage() {
 
   const role = ROLE_LABEL[profile.role]
 
-  const [progress, allArticles, allLabs, bookmarks] = await Promise.all([
+  const [progress, allLabs, bookmarks] = await Promise.all([
     getUserProgress(),
-    getAllArticleMeta(),
     getAllLabMeta(),
     getUserBookmarks(),
   ])
@@ -91,11 +89,11 @@ export default async function AccountPage() {
             <div className="ac-role-detail">{role.detail}</div>
           </div>
 
-          {progress && <ProgressSection progress={progress} allArticles={allArticles} allLabs={allLabs} />}
+          {progress && <ProgressSection progress={progress} allLabs={allLabs} />}
 
-          {progress && <AchievementsSection progress={progress} allArticles={allArticles} allLabs={allLabs} />}
+          {progress && <AchievementsSection progress={progress} allLabs={allLabs} />}
 
-          <BookmarksSection bookmarks={bookmarks} allArticles={allArticles} allLabs={allLabs} />
+          <BookmarksSection bookmarks={bookmarks} allLabs={allLabs} />
 
           <RedeemForm />
 

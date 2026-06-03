@@ -27,9 +27,8 @@ export async function getAllProjects(): Promise<Project[]> {
   const supabase = createPublicClient()
   if (!supabase) return FALLBACK
   const { data, error } = await supabase
-    .from('projects')
+    .from('projects_public')
     .select('*')
-    .eq('published', true)
     .order('display_order', { ascending: true })
   if (error || !data || data.length === 0) return FALLBACK
   return data as Project[]

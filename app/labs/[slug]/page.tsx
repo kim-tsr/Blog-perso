@@ -12,7 +12,11 @@ import Paywall from '@/components/Paywall'
 import LabSeriesBanner from '@/components/LabSeriesBanner'
 import LabQuiz from '@/components/LabQuiz'
 import { getCurrentProfile, hasRole } from '@/lib/auth'
-import { toggleLabCompletionForm } from '@/lib/progress'
+import { toggleLabCompletionForm, submitQuizAttempt, getUserBestQuizScore, getUserProgress } from '@/lib/progress'
+import { recommendNextLabs } from '@/lib/recommendations'
+import NextUp from '@/components/NextUp'
+import NewsletterSignup from '@/components/NewsletterSignup'
+import Comments from '@/components/Comments'
 import { createClient } from '@/lib/supabase/server'
 import { SITE_URL, SITE_NAME, SITE_AUTHOR } from '@/lib/site'
 import type { Metadata } from 'next'
@@ -53,8 +57,9 @@ const DIFF_DOTS: Record<string, number> = {
   'débutant': 1, 'intermédiaire': 2, 'avancé': 3,
 }
 
-export default async function LabPage({ params }: { params: Promise<{ slug: string }> }) {
+export default async function LabPage({ params, searchParams }: { params: Promise<{ slug: string }>; searchParams?: Promise<Record<string, string | string[] | undefined>> }) {
   const { slug } = await params
+  const resolvedSearchParams = searchParams ? await searchParams : undefined
   const lab = await getLabBySlug(slug)
   if (!lab) notFound()
 
@@ -74,16 +79,21 @@ export default async function LabPage({ params }: { params: Promise<{ slug: stri
       labStatus = (data?.status as 'started' | 'completed') ?? null
     } catch {}
   }
+  const previousBest = allowed && profile ? await getUserBestQuizScore(lab.slug) : null
+  const userProgress = profile ? await getUserProgress() : null
 
   const { tc } = getThemeClasses(lab.theme)
   const col = tc === 'tv' ? 'var(--v)' : tc === 'tc' ? 'var(--c)' : 'var(--a)'
   const dots = DIFF_DOTS[lab.difficulty] || 1
   const allLabs = await getAllLabs()
   const labsInSeries = lab.series ? allLabs.filter(l => l.series === lab.series) : []
-  // En présence d'une série, "otherLabs" privilégie les autres labs de la série
-  const otherLabs = lab.series
-    ? allLabs.filter(l => l.slug !== lab.slug && l.series !== lab.series).slice(0, 3)
-    : allLabs.filter(l => l.slug !== lab.slug).slice(0, 3)
+  // Recommandations personnalisées (3 max) — basées sur la série, le tag, et la progression user
+  const recommended = recommendNextLabs(lab.slug, allLabs, userProgress, 3)
+  const otherLabs = recommended.length > 0
+    ? recommended
+    : (lab.series
+      ? allLabs.filter(l => l.slug !== lab.slug && l.series !== lab.series).slice(0, 3)
+      : allLabs.filter(l => l.slug !== lab.slug).slice(0, 3))
 
   const jsonLd = {
     '@context': 'https://schema.org',
@@ -228,6 +238,8 @@ export default async function LabPage({ params }: { params: Promise<{ slug: stri
               questions={lab.quiz}
               alreadyCompleted={labStatus === 'completed'}
               onComplete={toggleLabCompletionForm}
+              onSubmitAttempt={submitQuizAttempt}
+              previousBest={previousBest}
               themeColor={col}
             />
           )}
@@ -274,24 +286,15 @@ export default async function LabPage({ params }: { params: Promise<{ slug: stri
           </a>
         </div>
 
-        {otherLabs.length > 0 && (
-          <>
-            <div className="lb-others-title">D&apos;autres labs</div>
-            <div className="lb-others">
-              {otherLabs.map(o => {
-                const { tc: oTc } = getThemeClasses(o.theme)
-                return (
-                  <Link key={o.slug} href={`/labs/${o.slug}`} className="lb-other">
-                    <span className={`lb-other-tag ${oTc}`}>{o.tag}</span>
-                    <div className="lb-other-title">{o.title}</div>
-                    <div className="lb-other-meta">{o.duration} · {o.difficulty}</div>
-                  </Link>
-                )
-              })}
-            </div>
-          </>
-        )}
       </div>
+
+      {otherLabs.length > 0 && (
+        <NextUp labs={otherLabs} currentSeries={lab.series ?? null} />
+      )}
+
+      <Comments slug={lab.slug} currentProfile={profile} searchParams={resolvedSearchParams} />
+
+      <NewsletterSignup variant="card" sourcePage={`/labs/${lab.slug}`} />
 
       <Footer />
     </div>

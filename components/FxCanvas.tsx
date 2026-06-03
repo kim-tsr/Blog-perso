@@ -35,22 +35,31 @@ export default function FxCanvas() {
     let mx = -9999, my = -9999
     let aurax = -9999, auray = -9999
     const sparks: Spark[] = []
-    const SPARK_COLS = ['oklch(0.68 0.24 280)', 'oklch(0.75 0.16 194)', 'oklch(0.76 0.16 65)']
+
+    // Light-mode uses darker, more saturated versions of the accent colors
+    // so they remain visible on the warm off-white background.
+    const SPARK_COLS_DARK  = ['oklch(0.68 0.24 280)', 'oklch(0.75 0.16 194)', 'oklch(0.76 0.16 65)']
+    const SPARK_COLS_LIGHT = ['oklch(0.48 0.24 280)', 'oklch(0.45 0.18 194)', 'oklch(0.50 0.18 65)']
 
     let shapes: Shape3D[] = []
+
+    const isLight = () => document.documentElement.getAttribute('data-theme') === 'light'
 
     const resize = () => {
       W = canvas.width  = window.innerWidth
       H = canvas.height = window.innerHeight
+      const light = isLight()
       shapes = [
-        makeShape('octahedron', W * 0.85, H * 0.3, 'oklch(0.68 0.24 280)'),
-        makeShape('ring',       W * 0.12, H * 0.7, 'oklch(0.75 0.16 194)'),
+        makeShape('octahedron', W * 0.85, H * 0.3, light ? 'oklch(0.48 0.24 280)' : 'oklch(0.68 0.24 280)'),
+        makeShape('ring',       W * 0.12, H * 0.7, light ? 'oklch(0.45 0.18 194)' : 'oklch(0.75 0.16 194)'),
       ]
     }
 
     const onMove = (e: MouseEvent) => { mx = e.clientX; my = e.clientY }
+    const onThemeChange = () => resize()
     window.addEventListener('mousemove', onMove, { passive: true })
     window.addEventListener('resize', resize, { passive: true })
+    window.addEventListener('themechange', onThemeChange)
     resize()
 
     const rotX = (v: number[], a: number) => [v[0], v[1]*Math.cos(a)-v[2]*Math.sin(a), v[1]*Math.sin(a)+v[2]*Math.cos(a)]
@@ -58,6 +67,7 @@ export default function FxCanvas() {
     const rotZ = (v: number[], a: number) => [v[0]*Math.cos(a)-v[1]*Math.sin(a), v[0]*Math.sin(a)+v[1]*Math.cos(a), v[2]]
 
     function drawShape(sh: Shape3D) {
+      const light = isLight()
       const s = 55
       const proj = sh.verts.map(v => {
         let p = rotX(v, sh.rx)
@@ -68,13 +78,14 @@ export default function FxCanvas() {
       })
       sh.edges.forEach(([a, b]) => {
         ctx.beginPath()
-        ctx.strokeStyle = sh.col.replace(')', ' / 0.12)')
+        // In light mode reduce glow (thick pass) alpha and bump fine line alpha
+        ctx.strokeStyle = sh.col.replace(')', light ? ' / 0.07)' : ' / 0.12)')
         ctx.lineWidth = 4
         ctx.moveTo(proj[a][0], proj[a][1])
         ctx.lineTo(proj[b][0], proj[b][1])
         ctx.stroke()
         ctx.beginPath()
-        ctx.strokeStyle = sh.col.replace(')', ' / 0.55)')
+        ctx.strokeStyle = sh.col.replace(')', light ? ' / 0.45)' : ' / 0.55)')
         ctx.lineWidth = 0.8
         ctx.moveTo(proj[a][0], proj[a][1])
         ctx.lineTo(proj[b][0], proj[b][1])
@@ -86,11 +97,14 @@ export default function FxCanvas() {
     let raf: number
     const loop = () => {
       ctx.clearRect(0, 0, W, H)
+      const light = isLight()
+      const SPARK_COLS = light ? SPARK_COLS_LIGHT : SPARK_COLS_DARK
 
       aurax += (mx - aurax) * 0.06; auray += (my - auray) * 0.06
       if (mx > 0) {
+        const auraAlpha = light ? '0.04' : '0.06'
         const g = ctx.createRadialGradient(aurax, auray, 0, aurax, auray, 200)
-        g.addColorStop(0, 'oklch(0.68 0.24 280 / 0.06)')
+        g.addColorStop(0, `oklch(${light ? '0.50 0.24 280' : '0.68 0.24 280'} / ${auraAlpha})`)
         g.addColorStop(1, 'transparent')
         ctx.fillStyle = g
         ctx.beginPath(); ctx.arc(aurax, auray, 200, 0, Math.PI*2); ctx.fill()
@@ -107,7 +121,7 @@ export default function FxCanvas() {
         if (sp.life <= 0) { sparks.splice(i, 1); continue }
         ctx.beginPath()
         ctx.arc(sp.x, sp.y, 1.5 * sp.life, 0, Math.PI*2)
-        ctx.fillStyle = sp.col.replace(')', ` / ${sp.life * 0.7})`)
+        ctx.fillStyle = sp.col.replace(')', ` / ${sp.life * (light ? 0.5 : 0.7)})`)
         ctx.fill()
       }
 
@@ -120,6 +134,7 @@ export default function FxCanvas() {
       cancelAnimationFrame(raf)
       window.removeEventListener('mousemove', onMove)
       window.removeEventListener('resize', resize)
+      window.removeEventListener('themechange', onThemeChange)
     }
   }, [])
 

@@ -1,22 +1,14 @@
 import Link from 'next/link'
 import type { UserProgress } from '@/lib/progress'
-import type { ArticleMeta } from '@/lib/theme'
 import type { LabMeta } from '@/lib/labs'
-import { getThemeClasses } from '@/lib/theme'
 
 interface Props {
   progress: UserProgress
-  allArticles: ArticleMeta[]
   allLabs: LabMeta[]
 }
 
-export default function ProgressSection({ progress, allArticles, allLabs }: Props) {
-  const articleMap = new Map(allArticles.map(a => [a.slug, a]))
-  const labMap     = new Map(allLabs.map(l => [l.slug, l]))
-
-  const readArticles = progress.articles
-    .map(r => ({ ...r, meta: articleMap.get(r.article_slug) }))
-    .filter(r => !!r.meta)
+export default function ProgressSection({ progress, allLabs }: Props) {
+  const labMap = new Map(allLabs.map(l => [l.slug, l]))
 
   const startedLabs = progress.labs.filter(l => l.status === 'started')
                                    .map(l => ({ ...l, meta: labMap.get(l.lab_slug) }))
@@ -76,16 +68,16 @@ export default function ProgressSection({ progress, allArticles, allLabs }: Prop
 
       <div className="ps-stats">
         <div className="ps-stat">
-          <div className="ps-stat-num" style={{ color:'var(--v)' }}>{progress.summary.articles_read}</div>
-          <div className="ps-stat-label">Articles lus</div>
-        </div>
-        <div className="ps-stat">
           <div className="ps-stat-num" style={{ color:'var(--c)' }}>{progress.summary.labs_completed}</div>
           <div className="ps-stat-label">Labs terminés</div>
         </div>
         <div className="ps-stat">
           <div className="ps-stat-num" style={{ color:'var(--a)' }}>{progress.summary.labs_started}</div>
           <div className="ps-stat-label">Labs en cours</div>
+        </div>
+        <div className="ps-stat">
+          <div className="ps-stat-num" style={{ color:'var(--v)' }}>{labProgressPct}<span style={{ fontSize:'16px' }}>%</span></div>
+          <div className="ps-stat-label">Progression globale</div>
         </div>
       </div>
 
@@ -154,37 +146,6 @@ export default function ProgressSection({ progress, allArticles, allLabs }: Prop
         </div>
       )}
 
-      {/* Derniers articles lus */}
-      <div className="ps-block">
-        <div className="ps-block-label">
-          <span>// derniers articles lus</span>
-          <span className="ps-count">{readArticles.length}</span>
-        </div>
-        {readArticles.length === 0 ? (
-          <div className="ps-empty">Aucun article lu enregistré. <Link href="/blog">Aller sur le blog →</Link></div>
-        ) : (
-          <div className="ps-list">
-            {readArticles.slice(0, 5).map(a => {
-              const { tc } = getThemeClasses(a.meta!.theme)
-              const col = tc === 'tv' ? 'var(--v)' : tc === 'tc' ? 'var(--c)' : 'var(--a)'
-              return (
-                <Link key={a.article_slug} href={`/articles/${a.article_slug}`} className="ps-item">
-                  <span className="ps-item-dot" style={{ background:col, boxShadow:`0 0 8px ${col}` }} aria-hidden="true" />
-                  <div className="ps-item-body">
-                    <div className="ps-item-title">{a.meta!.title}</div>
-                    <div className="ps-item-meta">
-                      <span style={{ color:col }}>{a.meta!.tag}</span>
-                      <span>·</span>
-                      <span>lu {new Date(a.read_at).toLocaleDateString('fr-FR')}</span>
-                    </div>
-                  </div>
-                  <svg width="11" height="11" viewBox="0 0 11 11" fill="none" className="ps-item-arrow" aria-hidden="true"><path d="M2 5.5h7M6.5 3l3 2.5-3 2.5" stroke="currentColor" strokeWidth="1.5" strokeLinecap="round" strokeLinejoin="round"/></svg>
-                </Link>
-              )
-            })}
-          </div>
-        )}
-      </div>
     </section>
   )
 }

@@ -120,10 +120,10 @@ export async function getAllLabs(): Promise<Lab[]> {
   let db_labs: Lab[] = []
 
   if (supabase) {
+    // labs_public = published OR scheduled_for <= now() — défini par migration 016
     const { data } = await supabase
-      .from('labs')
+      .from('labs_public')
       .select('*')
-      .eq('published', true)
     if (data) db_labs = (data as DbLabRow[]).map(dbRowToLab)
   }
 

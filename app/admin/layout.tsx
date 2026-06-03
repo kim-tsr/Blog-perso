@@ -4,11 +4,15 @@ import { getCurrentProfile } from '@/lib/auth'
 
 const SECTIONS = [
   { href: '/admin',            label: 'Dashboard',  exact: true },
-  { href: '/admin/articles',   label: 'Articles' },
   { href: '/admin/labs',       label: 'Labs' },
   { href: '/admin/projects',   label: 'Projets' },
   { href: '/admin/categories', label: 'Catégories' },
   { href: '/admin/codes',      label: 'Codes d\'accès' },
+  { href: '/admin/users',      label: 'Utilisateurs' },
+  { href: '/admin/newsletter', label: 'Newsletter' },
+  { href: '/admin/analytics',  label: 'Analytics' },
+  { href: '/admin/audit',      label: 'Audit' },
+  { href: '/admin/comments',   label: 'Commentaires' },
 ]
 
 export default async function AdminLayout({ children }: { children: React.ReactNode }) {

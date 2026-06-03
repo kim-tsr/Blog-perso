@@ -208,7 +208,7 @@ export default function LabsClient({ labs, userRole }: { labs: LabMeta[]; userRo
                       aria-label={`Ouvrir le lab : ${lab.title}`}
                     >
                       {lab.minRole !== 'free' && !userHasAccess(userRole, lab.minRole) && (
-                        <span style={{ position:'absolute', top:14, right:14, zIndex:2, display:'inline-flex', alignItems:'center', gap:5, padding:'4px 10px', borderRadius:100, background:'rgba(7,7,12,.78)', backdropFilter:'blur(8px)', border:'1px solid oklch(0.68 0.24 280/.4)', color:'var(--v)', fontFamily:'var(--fm)', fontSize:9, letterSpacing:'.14em', textTransform:'uppercase' }} aria-label={`Contenu ${lab.minRole}`}>
+                        <span style={{ position:'absolute', top:14, right:14, zIndex:2, display:'inline-flex', alignItems:'center', gap:5, padding:'4px 10px', borderRadius:100, background:'color-mix(in srgb, var(--bg) 78%, transparent)', backdropFilter:'blur(8px)', border:'1px solid oklch(0.68 0.24 280/.4)', color:'var(--v)', fontFamily:'var(--fm)', fontSize:9, letterSpacing:'.14em', textTransform:'uppercase' }} aria-label={`Contenu ${lab.minRole}`}>
                           <svg width="9" height="9" viewBox="0 0 12 12" fill="none" aria-hidden="true"><rect x="2.5" y="5.5" width="7" height="5" rx="1" stroke="currentColor" strokeWidth="1.2"/><path d="M4 5.5V4a2 2 0 014 0v1.5" stroke="currentColor" strokeWidth="1.2"/></svg>
                           {lab.minRole}
                         </span>

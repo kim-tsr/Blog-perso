@@ -1,0 +1,333 @@
+---
+title: "IaC : Terraform + Ansible end-to-end"
+slug: iac-terraform-ansible
+objective: "Comprendre la séparation provisioning / configuration, écrire un module Terraform pour Proxmox, automatiser la conf des VMs avec un playbook Ansible idempotent, et orchestrer le tout dans un pipeline CI."
+tag: Infrastructure
+theme: violet
+difficulty: intermédiaire
+duration: "65 min"
+prerequisites:
+  - "Un hyperviseur (Proxmox / libvirt / cloud) accessible en API"
+  - "Bases YAML et SSH"
+tools:
+  - "Terraform / OpenTofu"
+  - "Ansible + Molecule"
+  - "GitLab CI ou GitHub Actions"
+quiz:
+  - question: "Pourquoi Terraform et Ansible sont-ils complémentaires plutôt que concurrents ?"
+    options:
+      - "Ils font la même chose"
+      - "Terraform = provisioning DÉCLARATIF de ressources (calcule un diff state ↔ désiré et applique). Ansible = configuration IMPÉRATIVE / idempotente d'un OS déjà provisionné (packages, services, fichiers). Niveaux d'abstraction différents"
+      - "Terraform est obsolète"
+      - "Ansible ne fait que des playbooks"
+    correct: 1
+    explanation: "Terraform crée la VM, le réseau, le DNS, le LB. Ansible installe nginx, configure /etc/nginx, démarre le service. Confondre les deux mène à 'des playbooks qui créent des VMs' (lent, pas de state) ou 'du Terraform qui patch /etc/hosts' (cauchemar)."
+  - question: "Qu'est-ce que le 'state' Terraform et pourquoi le mettre en remote ?"
+    options:
+      - "Un cache local"
+      - "Un fichier JSON qui mappe les ressources de ta config aux objets réels (IDs cloud). Remote (S3, Terraform Cloud, GitLab) → travail à plusieurs, locking, sauvegarde, secrets pas en clair sur disk dev"
+      - "Optionnel"
+      - "Une copie du code"
+    correct: 1
+    explanation: "State local = un seul dev peut bosser, perte = catastrophe. Remote state + state locking (DynamoDB / API GitLab) = travail en équipe, atomicité. Toujours encrypted-at-rest + access controlled."
+  - question: "Quel est l'intérêt principal de la propriété 'idempotence' en Ansible ?"
+    options:
+      - "Plus rapide"
+      - "Rejouer le playbook 10x produit le MÊME état que 1x → ré-application sans risque, convergence garantie, drift detection facile. C'est ce qui distingue un playbook propre d'un script bash"
+      - "Plus court"
+      - "Évite les erreurs"
+    correct: 1
+    explanation: "Un module Ansible bien fait check d'abord l'état actuel et n'agit que si nécessaire (ex: package: state=present → installe SEULEMENT si absent). Permet de re-converger un host vers l'état souhaité après dérive, sans casser ce qui marche déjà."
+  - question: "Pourquoi 'molecule' est-il indispensable pour tester un rôle Ansible ?"
+    options:
+      - "Pour faire joli"
+      - "Lance le rôle dans un container/VM jetable, vérifie l'idempotence (joue 2x, doit dire 'ok') + tests (testinfra/serverspec) → CI catch les régressions avant prod"
+      - "C'est obligatoire"
+      - "Pour mocker"
+    correct: 1
+    explanation: "Sans molecule : un fix dans un role casse silencieusement la prod 2 mois plus tard. Avec molecule en CI : chaque PR teste create + converge + idempotence + verify dans un OS représentatif. Standard de qualité pour role distribué."
+  - question: "Quel pattern utiliser pour qu'Ansible cible les VMs créées par Terraform ?"
+    options:
+      - "Hardcoder les IPs"
+      - "Inventaire DYNAMIQUE : un script (terraform-inventory ou plugin Ansible) lit le state Terraform et génère l'inventaire à la volée. Zéro maintenance manuelle"
+      - "Ansible ne peut pas"
+      - "Copier-coller"
+    correct: 1
+    explanation: "Pipeline classique : terraform apply → terraform output -json > /tmp/state → ansible-inventory --list lit le state → ansible-playbook tourne sur les hosts à jour. Ou utiliser un état partagé (Consul KV, Vault) pour découplage."
+---
+
+## 🧠 Théorie : provisioning vs configuration
+
+```
+   PROVISIONING (Terraform)         CONFIGURATION (Ansible)
+   ────────────────────────         ──────────────────────
+   
+   Crée la VM, le réseau,            Installe nginx,
+   le DNS, le LB, le bucket S3       configure /etc/nginx,
+                                     ouvre firewall, démarre
+   
+   DÉCLARATIF                         IDEMPOTENT
+   "voici l'état désiré"              "amène l'OS à cet état"
+   
+   State file                         Pas de state — l'OS est l'état
+   "cloud level"                      "OS level"
+```
+
+Confondre les deux mène à :
+- Provisionner avec Ansible : pas de state, pas de planning, lent.
+- Configurer avec Terraform : oublier les diffs intra-VM, pas idempotent.
+
+### Pipeline cible
+
+```
+   git push
+       │
+       ▼
+   ┌────────────┐
+   │  CI        │
+   └─────┬──────┘
+         ▼
+   terraform plan → terraform apply (provisionne)
+         │
+         ▼
+   terraform output > inventory.json
+         │
+         ▼
+   ansible-playbook -i inventory.json site.yml (configure)
+         │
+         ▼
+   tests : curl, testinfra, healthchecks
+```
+
+## 🎯 Objectif
+
+1. Provisionner 3 VMs Proxmox via Terraform.
+2. Configurer un cluster k3s via Ansible.
+3. Industrialiser dans un pipeline GitLab CI.
+4. Tester avec Molecule.
+
+## 📋 Étape 1 — Terraform : provisioning Proxmox
+
+```hcl
+# main.tf
+terraform {
+  required_providers {
+    proxmox = {
+      source  = "bpg/proxmox"
+      version = "~> 0.46"
+    }
+  }
+  backend "s3" {
+    bucket = "tf-state-homelab"
+    key    = "k3s-cluster/terraform.tfstate"
+    region = "fr-par"
+  }
+}
+
+provider "proxmox" {
+  endpoint = var.pve_url
+  api_token = var.pve_token
+}
+
+resource "proxmox_virtual_environment_vm" "k8s_node" {
+  count     = 3
+  name      = "k8s-node-${count.index + 1}"
+  node_name = "pve01"
+  cpu { cores = 4 }
+  memory { dedicated = 8192 }
+
+  clone {
+    vm_id = 9000   # template debian-12-cloud
+  }
+
+  initialization {
+    ip_config {
+      ipv4 {
+        address = "192.168.10.${10 + count.index}/24"
+        gateway = "192.168.10.1"
+      }
+    }
+    user_account {
+      username = "ansible"
+      keys     = [file("~/.ssh/id_ed25519.pub")]
+    }
+  }
+}
+
+output "nodes" {
+  value = {
+    for i, vm in proxmox_virtual_environment_vm.k8s_node :
+    vm.name => vm.ipv4_addresses[1][0]
+  }
+}
+```
+
+```bash
+terraform init
+terraform plan -out plan.bin
+terraform apply plan.bin
+terraform output -json nodes
+```
+
+## 📋 Étape 2 — Inventaire Ansible dynamique
+
+```python
+# inventory/terraform.py
+#!/usr/bin/env python3
+import json, subprocess, sys
+out = subprocess.check_output(['terraform', '-chdir=../terraform', 'output', '-json', 'nodes'])
+nodes = json.loads(out)
+inv = {
+  'all': {'children': {'k3s': {'hosts': {n: {'ansible_host': ip} for n, ip in nodes.items()}}}},
+  '_meta': {'hostvars': {n: {'ansible_user': 'ansible'} for n in nodes}}
+}
+print(json.dumps(inv))
+```
+
+```bash
+chmod +x inventory/terraform.py
+ansible -i inventory/terraform.py all -m ping
+```
+
+## 📋 Étape 3 — Rôle Ansible : install k3s
+
+```yaml
+# roles/k3s/tasks/main.yml
+- name: Installer dépendances
+  apt:
+    name: [curl, iptables, kmod]
+    state: present
+    update_cache: yes
+
+- name: Récupérer le script d'install k3s
+  get_url:
+    url: https://get.k3s.io
+    dest: /tmp/install-k3s.sh
+    mode: '0755'
+
+- name: Bootstrap server sur le node #1
+  shell: INSTALL_K3S_EXEC="server --cluster-init" /tmp/install-k3s.sh
+  args:
+    creates: /etc/rancher/k3s/k3s.yaml
+  when: inventory_hostname == groups['k3s'][0]
+
+- name: Récupérer le token cluster
+  slurp:
+    src: /var/lib/rancher/k3s/server/node-token
+  register: token_file
+  when: inventory_hostname == groups['k3s'][0]
+
+- name: Joindre les autres nodes
+  shell: |
+    K3S_URL=https://{{ hostvars[groups['k3s'][0]].ansible_host }}:6443 \
+    K3S_TOKEN={{ hostvars[groups['k3s'][0]].token_file.content | b64decode | trim }} \
+    INSTALL_K3S_EXEC="server" /tmp/install-k3s.sh
+  args:
+    creates: /etc/rancher/k3s/k3s.yaml
+  when: inventory_hostname != groups['k3s'][0]
+```
+
+```yaml
+# site.yml
+- hosts: k3s
+  become: yes
+  roles:
+    - k3s
+```
+
+```bash
+ansible-playbook -i inventory/terraform.py site.yml
+```
+
+## 📋 Étape 4 — Tests Molecule
+
+```yaml
+# roles/k3s/molecule/default/molecule.yml
+driver:
+  name: docker
+platforms:
+  - name: instance
+    image: debian:12
+    privileged: true   # nécessaire pour k3s test
+    command: /sbin/init
+provisioner:
+  name: ansible
+verifier:
+  name: ansible
+```
+
+```yaml
+# roles/k3s/molecule/default/verify.yml
+- hosts: all
+  tasks:
+    - name: kubectl répond
+      command: k3s kubectl get nodes
+      register: kubectl
+      changed_when: false
+    - name: au moins 1 node Ready
+      assert:
+        that: "'Ready' in kubectl.stdout"
+```
+
+```bash
+cd roles/k3s
+molecule test    # create → converge → idempotence → verify → destroy
+```
+
+## 📋 Étape 5 — Pipeline GitLab CI
+
+```yaml
+# .gitlab-ci.yml
+stages: [plan, apply, configure]
+
+variables:
+  TF_STATE_NAME: k3s
+  TF_ROOT: terraform/
+
+plan:
+  image: hashicorp/terraform:1.7
+  script:
+    - cd $TF_ROOT
+    - terraform init
+    - terraform plan -out=plan.bin
+
+apply:
+  image: hashicorp/terraform:1.7
+  needs: [plan]
+  when: manual
+  script:
+    - cd $TF_ROOT
+    - terraform apply plan.bin
+
+configure:
+  image: alpine/ansible:latest
+  needs: [apply]
+  script:
+    - ansible-playbook -i inventory/terraform.py site.yml --check    # dry run d'abord
+    - ansible-playbook -i inventory/terraform.py site.yml
+```
+
+> 💡 `terraform apply` MANUEL pour éviter les destructions accidentelles, MAIS `terraform plan` automatique dans la MR pour code review du diff.
+
+## 🧠 Pitfalls
+
+❌ **State local en équipe** : conflit garanti.
+❌ **Secrets en clair dans HCL** : utilise variables d'env ou Vault.
+❌ **`shell:` partout en Ansible au lieu des modules** : casse l'idempotence.
+❌ **`apt update` à chaque tâche** : lent. Utilise un block `pre_tasks` + `cache_valid_time`.
+❌ **Provisionner sans destroy plan** : terraform peut détruire en cas de drift entre state et infra.
+
+## ✅ Validation
+
+- `terraform plan` montre 0 changes après apply
+- Re-jouer `ansible-playbook` → tout `ok=N changed=0`
+- `kubectl get nodes` → 3 nodes Ready
+- Molecule test passe en CI
+
+## 🚀 Pour aller plus loin
+
+- **OpenTofu** : fork open source (et stable) de Terraform après le changement de licence HashiCorp
+- **Terragrunt** : DRY pour stack multi-env Terraform
+- **Ansible Vault** ou **HashiCorp Vault** : gestion centralisée des secrets
+- **Atlantis** : auto-apply Terraform sur PR validation
+- **Pulumi** : alternative à Terraform en TypeScript/Python/Go (préférable si tu veux la puissance d'un vrai langage)

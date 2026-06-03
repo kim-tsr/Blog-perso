@@ -21,6 +21,7 @@ interface LabRow {
   tools: string[]
   min_role: 'free' | 'pro' | 'admin'
   published: boolean
+  scheduled_for: string | null
 }
 
 export default async function EditLabPage({ params }: { params: Promise<{ id: string }> }) {
@@ -61,6 +62,7 @@ export default async function EditLabPage({ params }: { params: Promise<{ id: st
           tools:         lab.tools ?? [],
           min_role:      lab.min_role,
           published:     lab.published,
+          scheduled_for: lab.scheduled_for,
         }}
       />
     </div>

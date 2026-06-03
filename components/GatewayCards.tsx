@@ -6,10 +6,10 @@ import { setPageOrigin } from '@/lib/pageOrigin'
 const CARDS = [
   {
     num: '01',
-    code: '// blog',
-    title: 'Le Blog',
-    desc: 'Tutoriels techniques sur l\'infrastructure, la sécurité et le réseau.',
-    href: '/blog',
+    code: '// labs',
+    title: 'Labs',
+    desc: 'Tutoriels pratiques avec théorie, code et quiz — infrastructure, sécurité, réseau.',
+    href: '/labs',
     accent: 'var(--v)',
     border: 'oklch(0.68 0.24 280/.5)',
     glow: 'radial-gradient(ellipse at 50% 0%, oklch(0.50 0.28 280/.25), transparent 70%)',

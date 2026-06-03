@@ -14,13 +14,22 @@ interface LabRow {
   duration: string
   min_role: 'free' | 'pro' | 'admin'
   published: boolean
+  scheduled_for: string | null
+}
+
+type LabStatus = 'published' | 'scheduled' | 'draft'
+
+function labStatus(l: LabRow): LabStatus {
+  if (l.published) return 'published'
+  if (l.scheduled_for && new Date(l.scheduled_for) > new Date()) return 'scheduled'
+  return 'draft'
 }
 
 export default async function AdminLabsPage() {
   const { supabase } = await requireAdminClient()
   const { data } = await supabase
     .from('labs')
-    .select('id, slug, title, category_slug, difficulty, duration, min_role, published')
+    .select('id, slug, title, category_slug, difficulty, duration, min_role, published, scheduled_for')
     .order('updated_at', { ascending: false })
   const rows = (data ?? []) as LabRow[]
 
@@ -45,8 +54,9 @@ export default async function AdminLabsPage() {
         .lab-actions { display:flex; gap:6px; justify-content:flex-end; }
         .lab-act { background:transparent; border:1px solid var(--border); color:var(--mid); font-family:var(--fm); font-size:10px; padding:5px 12px; border-radius:100px; cursor:pointer; letter-spacing:.08em; transition:color .2s, border-color .2s; }
         .lab-act:hover { color:var(--text); border-color:rgba(255,255,255,.18); }
-        .lab-status.on  { color:var(--c); font-family:var(--fm); font-size:10px; letter-spacing:.1em; text-transform:uppercase; }
-        .lab-status.off { color:var(--dim); font-family:var(--fm); font-size:10px; letter-spacing:.1em; text-transform:uppercase; }
+        .lab-status { display:inline-flex; align-items:center; gap:6px; font-family:var(--fm); font-size:10px; letter-spacing:.12em; text-transform:uppercase; padding:3px 9px; border-radius:100px; border:1px solid var(--st-c); background:color-mix(in oklab, var(--st-c) 10%, transparent); color:var(--st-c); }
+        .lab-status::before { content:''; width:5px; height:5px; border-radius:50%; background:var(--st-c); }
+        .lab-sched { font-family:var(--fm); font-size:10px; color:var(--dim); display:block; margin-top:4px; letter-spacing:.04em; }
         .lab-empty { padding:60px 24px; text-align:center; border:1px dashed var(--border); border-radius:14px; color:var(--mid); font-size:13px; }
       `}</style>
       <div className="lab-head">
@@ -87,7 +97,21 @@ export default async function AdminLabsPage() {
                   <td><span style={{ fontFamily:'var(--fm)', fontSize:11 }}>{l.difficulty}</span></td>
                   <td><span style={{ fontFamily:'var(--fm)', fontSize:11 }}>{l.duration}</span></td>
                   <td><span className={`lab-pill ${l.min_role}`}>{l.min_role}</span></td>
-                  <td><span className={`lab-status ${l.published ? 'on' : 'off'}`}>{l.published ? 'publié' : 'brouillon'}</span></td>
+                  <td>
+                    {(() => {
+                      const s = labStatus(l)
+                      const color = s === 'published' ? 'var(--c)' : s === 'scheduled' ? 'var(--a)' : 'var(--dim)'
+                      const label = s === 'published' ? 'publié' : s === 'scheduled' ? 'programmé' : 'brouillon'
+                      return (
+                        <>
+                          <span className="lab-status" style={{ '--st-c': color } as React.CSSProperties}>{label}</span>
+                          {s === 'scheduled' && l.scheduled_for && (
+                            <span className="lab-sched">{new Date(l.scheduled_for).toLocaleString('fr-FR', { day:'2-digit', month:'short', hour:'2-digit', minute:'2-digit' })}</span>
+                          )}
+                        </>
+                      )
+                    })()}
+                  </td>
                   <td>
                     <div className="lab-actions">
                       <Link href={`/admin/labs/${l.id}/edit`} className="lab-act">Éditer</Link>

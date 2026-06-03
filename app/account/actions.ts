@@ -4,6 +4,7 @@ import { revalidatePath } from 'next/cache'
 import { createClient } from '@/lib/supabase/server'
 import { REDEEM_ERRORS } from '@/lib/codes'
 import { UserRole } from '@/lib/auth'
+import { trackServerEvent } from '@/lib/analytics'
 
 export interface RedeemResult {
   ok: boolean
@@ -39,6 +40,12 @@ export async function redeemAccessCode(formData: FormData): Promise<RedeemResult
   revalidatePath('/', 'layout')
 
   const upgraded = result.previous_role !== result.granted_role
+  if (upgraded && (result.granted_role === 'pro' || result.granted_role === 'admin')) {
+    await trackServerEvent('upgrade_to_pro', null, null, {
+      from: result.previous_role,
+      to:   result.granted_role,
+    })
+  }
   return {
     ok: true,
     message: upgraded

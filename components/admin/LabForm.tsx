@@ -18,6 +18,7 @@ interface Props {
     tools: string[]
     min_role: 'free' | 'pro' | 'admin'
     published: boolean
+    scheduled_for?: string | null
   }
   action: (formData: FormData) => Promise<{ ok: boolean; error?: string } | void>
   onDelete?: () => Promise<void>
@@ -122,10 +123,23 @@ export default function LabForm({ categories, initial, action, onDelete, mode }:
 
       <MarkdownEditor name="content" defaultValue={initial?.content ?? ''} label="Étapes du lab (Markdown)" />
 
-      <label className="lf-check">
-        <input type="checkbox" name="published" defaultChecked={initial?.published ?? true} />
-        Publier
-      </label>
+      <div className="lf-row">
+        <label className="lf-check">
+          <input type="checkbox" name="published" defaultChecked={initial?.published ?? true} />
+          Publier maintenant
+        </label>
+        <div className="lf-field">
+          <label className="lf-label" htmlFor="scheduled_for">Publier le · (optionnel)</label>
+          <input
+            id="scheduled_for"
+            name="scheduled_for"
+            type="datetime-local"
+            className="lf-input mono"
+            defaultValue={initial?.scheduled_for ? new Date(initial.scheduled_for).toISOString().slice(0, 16) : ''}
+          />
+          <span className="lf-help">// si rempli et &laquo; Publier &raquo; d&eacute;coch&eacute;, le lab devient visible automatiquement &agrave; cette date</span>
+        </div>
+      </div>
 
       <div className="lf-actions">
         <div className="lf-cta">

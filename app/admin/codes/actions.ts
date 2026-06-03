@@ -4,6 +4,7 @@ import { revalidatePath } from 'next/cache'
 import { redirect } from 'next/navigation'
 import { createClient } from '@/lib/supabase/server'
 import { generateAccessCode } from '@/lib/codes'
+import { logAdminAction } from '@/lib/audit'
 import { UserRole } from '@/lib/auth'
 
 async function requireAdmin() {
@@ -39,6 +40,8 @@ export async function createAccessCode(formData: FormData): Promise<CreateCodeRe
 
   if (error) return { ok: false, error: error.message }
 
+  await logAdminAction('code.created', 'access_code', code, { grants_role: grantsRole, max_uses, expires_at })
+
   revalidatePath('/admin/codes')
   return { ok: true, code }
 }
@@ -46,11 +49,13 @@ export async function createAccessCode(formData: FormData): Promise<CreateCodeRe
 export async function toggleAccessCode(code: string, disabled: boolean) {
   const supabase = await requireAdmin()
   await supabase.from('access_codes').update({ disabled }).eq('code', code)
+  await logAdminAction(disabled ? 'code.disabled' : 'code.enabled', 'access_code', code)
   revalidatePath('/admin/codes')
 }
 
 export async function deleteAccessCode(code: string) {
   const supabase = await requireAdmin()
   await supabase.from('access_codes').delete().eq('code', code)
+  await logAdminAction('code.deleted', 'access_code', code)
   revalidatePath('/admin/codes')
 }
