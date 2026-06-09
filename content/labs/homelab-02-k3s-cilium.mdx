@@ -62,31 +62,47 @@ quiz:
 
 > 📚 **Série « Homelab from zero »** — Lab 2 / 5. On démarre exactement là où le Lab #1 s'est arrêté : 3 VMs Debian fraîches sur Proxmox.
 
-## 🧠 Théorie : qu'est-ce qu'eBPF et pourquoi ça change tout ?
+## 🧠 Théorie : eBPF — exécuter du code dans le kernel sans modifier le kernel
 
-eBPF (extended Berkeley Packet Filter) permet de charger des programmes **sandboxés**, vérifiés par le kernel, qui s'exécutent à des **hooks** spécifiques (syscalls, packets, fonctions). Sans modifier le code source du kernel ni recompiler.
+eBPF (extended Berkeley Packet Filter) est la technologie la plus transformative du kernel Linux de la dernière décennie. L'idée de base : charger dans le kernel des **programmes sandboxés** qui s'exécutent à des points d'accroche précis — réception d'un paquet réseau, appel système (syscall), entrée dans une fonction kernel — sans toucher au code source, sans recompiler, sans redémarrer. Un **vérificateur** (BPF verifier) analyse statiquement chaque programme avant de l'injecter pour garantir qu'il ne peut pas planter le kernel ni créer de boucle infinie.
 
-```
-   Avant eBPF                          Avec eBPF
+Avant eBPF, modifier le comportement du kernel nécessitait soit d'écrire un module kernel (risqué, fragile entre versions), soit de patcher le kernel lui-même (impossible en prod). C'est cette friction qui a longtemps bloqué l'innovation dans le réseau Kubernetes : iptables était lent mais "faisable", toute alternative nécessitait de toucher au kernel.
 
-   Application (userspace)             Application (userspace)
-        │                                     │
-        │ syscall                             │ syscall (intercepté)
-        ▼                                     ▼
-   ╔═══════════╗                         ╔═══════════╗
-   ║  Kernel   ║  ← code figé            ║  Kernel   ║◄── prog. eBPF
-   ║           ║     (modifier =          ║   + hooks ║      attaché à
-   ║  iptables ║      recompiler)         ║           ║      des hooks
-   ║  netfilter║                          ║  Cilium   ║      → routing,
-   ╚═══════════╝                          ║   Falco   ║        firewall,
-                                          ║   bpftrace║        tracing
-                                          ╚═══════════╝
-```
+eBPF a rendu trois choses possibles en production : **Cilium** pour le réseau et les politiques (ce lab), **Falco** pour la détection d'intrusion (Lab #5), et **bpftrace/pyroscope** pour le profiling sans instrumentation. Ce sont les trois outils-phares de la pile DevSecOps moderne.
 
-**Conséquences pour Kubernetes :**
-- Cilium remplace `kube-proxy` (iptables/IPVS) par un datapath eBPF → latence réduite, scalable au-delà de 5000 services
-- NetworkPolicies + visibilité L7 sans sidecar (pas de proxy par pod)
-- Observabilité par flux (Hubble) avec verdict exact
+<Stack layers={[
+  { label: 'Application (userspace)', hint: 'pods Kubernetes', accent: 'v' },
+  { label: 'Cilium / Falco / bpftrace', hint: 'programmes eBPF attachés aux hooks', accent: 'c' },
+  { label: 'Hooks eBPF (tc, XDP, kprobe, tracepoint)', hint: 'points d\'accroche vérifiés', accent: 'a' },
+  { label: 'Kernel Linux (inchangé)', hint: 'aucun patch, aucun module risqué', accent: 's' },
+]} caption="eBPF : instrumentation du kernel sans le modifier" />
+
+## 🧠 Théorie : Cilium — réseau Kubernetes sans iptables
+
+Dans un cluster Kubernetes standard, deux composants gèrent le réseau : un **CNI** (Container Network Interface, ex : flannel, Calico) pour le routage L3 entre pods, et **kube-proxy** pour implémenter les Services Kubernetes via des règles iptables. Cette architecture fonctionne, mais iptables est une liste linéaire de règles : trouver la bonne règle pour un Service parmi 5000 prend O(N) comparaisons, et l'overhead devient mesurable à partir de ~500 Services.
+
+Cilium remplace **les deux** avec un datapath eBPF unifié :
+
+- Le routage pod-à-pod passe par des cartes de hachage eBPF (O(1)) au lieu de règles iptables
+- Les Services Kubernetes sont résolus directement dans le kernel, avant que le paquet n'atteigne le socket
+- Les NetworkPolicies sont évaluées en-ligne dans le datapath, sans passer par netfilter
+
+Au-dessus du datapath, **Hubble** lit les événements eBPF de Cilium et les expose : chaque flux entre pods est visible avec son verdict (ALLOWED / DROPPED), sa raison, sa latence, et les métadonnées Kubernetes (namespace, pod name, label). C'est l'observabilité réseau native, sans sidecar.
+
+<Topology
+  nodes={[
+    { id: 'pa', kind: 'service', label: 'Pod A',   hint: 'ns demo',   col: 1, row: 1, accent: 'v' },
+    { id: 'pb', kind: 'service', label: 'Pod B',   hint: 'ns demo',   col: 3, row: 1, accent: 'v' },
+    { id: 'ca', kind: 'edge',    label: 'Cilium',  hint: 'node master', col: 2, row: 1, accent: 'c' },
+    { id: 'h',  kind: 'service', label: 'Hubble',  hint: 'observabilité', col: 2, row: 2, accent: 'a' },
+  ]}
+  edges={[
+    { from: 'pa', to: 'ca', kind: 'flow', label: 'eBPF hook' },
+    { from: 'ca', to: 'pb', kind: 'flow', label: 'verdict ALLOWED' },
+    { from: 'ca', to: 'h',  kind: 'data', label: 'flow events' },
+  ]}
+  caption="Cilium intercepte chaque paquet via eBPF ; Hubble consomme les événements"
+/>
 
 ## 🎯 Objectif
 
@@ -98,32 +114,23 @@ Transformer les VMs Debian en cluster Kubernetes léger avec un CNI eBPF de nive
 
 ## 📐 Architecture cible du lab #2
 
-```
-                      Cluster k3s
-   ┌────────────────────────────────────────────────┐
-   │                                                │
-   │   ┌─────────────────┐    ┌─────────────────┐  │
-   │   │  k3s-master     │    │  k3s-worker     │  │
-   │   │  192.168.1.20   │    │  192.168.1.21   │  │
-   │   │                 │    │                 │  │
-   │   │  ┌───────────┐  │    │                 │  │
-   │   │  │ API server│  │    │                 │  │
-   │   │  └───────────┘  │    │                 │  │
-   │   │  ┌───────────┐  │    │  ┌───────────┐  │  │
-   │   │  │ Cilium    │◄─┼────┼─►│ Cilium    │  │  │
-   │   │  │ Agent     │  │    │  │ Agent     │  │  │
-   │   │  │ + eBPF    │  │    │  │ + eBPF    │  │  │
-   │   │  └───────────┘  │    │  └───────────┘  │  │
-   │   │  ┌───────────┐  │    │  ┌───────────┐  │  │
-   │   │  │ Hubble    │  │    │  │ pods app  │  │  │
-   │   │  │ Relay/UI  │  │    │  │ (whoami)  │  │  │
-   │   │  └───────────┘  │    │  └───────────┘  │  │
-   │   └─────────────────┘    └─────────────────┘  │
-   │                                                │
-   │   Pod CIDR : 10.42.0.0/16                     │
-   │   Service CIDR : 10.43.0.0/16                 │
-   └────────────────────────────────────────────────┘
-```
+<Topology
+  nodes={[
+    { id: 'km', kind: 'host',    label: 'k3s-master', hint: '192.168.1.20 · API + Cilium + Hubble', col: 1, row: 1, accent: 'v' },
+    { id: 'kw', kind: 'host',    label: 'k3s-worker',  hint: '192.168.1.21 · kubelet + Cilium', col: 3, row: 1, accent: 'v' },
+    { id: 'ca', kind: 'edge',    label: 'Cilium agent', hint: 'eBPF datapath', col: 1, row: 2, accent: 'c' },
+    { id: 'cb', kind: 'edge',    label: 'Cilium agent', hint: 'eBPF datapath', col: 3, row: 2, accent: 'c' },
+    { id: 'hu', kind: 'service', label: 'Hubble UI',   hint: 'localhost:12000', col: 2, row: 3, accent: 'a' },
+    { id: 'wp', kind: 'service', label: 'whoami pod',  hint: 'ns demo',        col: 3, row: 3, accent: 's' },
+  ]}
+  edges={[
+    { from: 'km', to: 'kw', kind: 'flow', label: 'Pod CIDR 10.42.0.0/16' },
+    { from: 'ca', to: 'cb', kind: 'flow', label: 'eBPF tunnel' },
+    { from: 'ca', to: 'hu', kind: 'data', label: 'flow events' },
+    { from: 'cb', to: 'wp', kind: 'flow' },
+  ]}
+  caption="Cluster k3s : 1 master + 1 worker, Cilium remplace flannel et kube-proxy"
+/>
 
 ## 📋 Étape 1 — Installer k3s sur le master sans CNI
 
@@ -144,7 +151,14 @@ curl -sfL https://get.k3s.io | sh -s - server \
 sudo cat /var/lib/rancher/k3s/server/node-token
 ```
 
-> 💡 `--disable-kube-proxy` est critique : sans ça tu te retrouves avec **deux** systèmes de service routing qui se marchent dessus.
+Chaque flag de cette commande a une raison précise :
+
+- `--flannel-backend=none` désactive le CNI embarqué de k3s. Sans ça, flannel démarre et tente de créer des interfaces réseau que Cilium voudra aussi gérer — collision garantie.
+- `--disable-network-policy` désactive le contrôleur de NetworkPolicy built-in de k3s qui s'appuierait sur iptables. Cilium gère les NetworkPolicies lui-même via eBPF.
+- `--disable-kube-proxy` est le flag critique : il empêche le démarrage de kube-proxy sur chaque node. Sans lui, tu aurais deux systèmes de routing de Services actifs simultanément — résultat : des connexions aléatoirement cassées selon quel système répond en premier.
+- `--cluster-cidr` (plage des IP de pods) et `--service-cidr` (plage des ClusterIP des Services) sont les valeurs par défaut de k3s — on les écrit explicitement pour les réutiliser à l'identique dans la config Cilium. Le `clusterPoolIPv4PodCIDRList` de Cilium **doit** correspondre au `--cluster-cidr` ; sinon Cilium attribue des IP de pods hors de la plage routée par k3s et le réseau ne monte pas.
+
+> 💡 `--disable-kube-proxy` est critique : sans ça tu te retrouves avec **deux** systèmes de service routing qui se marchent dessus. Ce flag est stable dans k3s depuis longtemps ; assure-toi simplement d'être sur une version récente (k3s ≥ v1.27, idéalement le canal `stable` 2025).
 
 ## 📋 Étape 2 — Joindre le worker
 
@@ -154,15 +168,19 @@ TOKEN="<le-token-récupéré>"
 curl -sfL https://get.k3s.io | K3S_URL=https://192.168.1.20:6443 K3S_TOKEN="$TOKEN" sh -
 ```
 
-Sur le master :
+Le worker k3s démarre en mode **agent** uniquement (pas de control plane) : il exécute kubelet pour gérer les pods, mais délègue toute décision d'ordonnancement au master via l'API server (port 6443). Le token, lu dans `/var/lib/rancher/k3s/server/node-token`, est un secret partagé qui authentifie le worker auprès du master.
+
+Le kubeconfig n'existe que sur le **master** (l'agent n'a pas de control plane). Reviens donc sur `k3s-master` pour piloter le cluster :
 
 ```bash
-sudo chmod 644 /etc/rancher/k3s/k3s.yaml
+# Sur k3s-master (192.168.1.20)
 export KUBECONFIG=/etc/rancher/k3s/k3s.yaml
 kubectl get nodes -o wide
 ```
 
-Les deux nodes apparaissent en `NotReady` — normal, pas de CNI encore.
+> 💡 Le fichier `/etc/rancher/k3s/k3s.yaml` n'est lisible que par root (mode 600). Plutôt que d'élargir ses permissions (`chmod 644` exposerait les credentials cluster-admin à tout utilisateur de la VM), lance `kubectl` en root ou via `sudo`, ou copie ce fichier vers `~/.kube/config` de ton poste en remplaçant `127.0.0.1` par `192.168.1.20`.
+
+Les deux nodes apparaissent en `NotReady` — normal, pas de CNI encore. Sans CNI, le réseau pod-à-pod est inexistant et kubelet rapporte NotReady jusqu'à ce qu'il soit opérationnel.
 
 ## 📋 Étape 3 — Installer Cilium
 
@@ -179,44 +197,51 @@ cilium install \
   --set k8sServiceHost=192.168.1.20 \
   --set k8sServicePort=6443 \
   --set hubble.relay.enabled=true \
-  --set hubble.ui.enabled=true
+  --set hubble.ui.enabled=true \
+  --set hubble.metrics.enabled="{dns,drop,tcp,flow,port-distribution,icmp,http}" \
+  --set prometheus.enabled=true \
+  --set operator.prometheus.enabled=true
 
 cilium status --wait
 ```
 
-Vérifie : `kubectl get nodes` → les nodes passent `Ready`.
+Les paramètres Cilium installent le datapath eBPF complet :
 
-## 🧠 Pourquoi `kubeProxyReplacement=true` ?
+- `kubeProxyReplacement=true` active le remplacement total de kube-proxy. Cilium lit directement la liste des Services depuis l'API Kubernetes et programme les règles BPF correspondantes dans chaque node — sans passer par iptables.
+- `k8sServiceHost` et `k8sServicePort` sont nécessaires car, en mode `kubeProxyReplacement`, Cilium doit pouvoir joindre l'API server pour bootstrapper — avant même que les Services Kubernetes soient programmés dans BPF.
+- `hubble.relay.enabled=true` déploie Hubble Relay, un composant qui agrège les flows de tous les nodes. Sans lui, tu ne verrais les flows que du node local.
+- `prometheus.enabled=true` et `operator.prometheus.enabled=true` exposent un port `/metrics` sur l'agent et l'operator Cilium ; `hubble.metrics.enabled` active en plus les métriques de flux (DNS, drops, débit). On en a besoin **dès maintenant** car le Lab #4 viendra scraper ces endpoints avec Prometheus — autant les activer à l'installation plutôt que de réinstaller Cilium plus tard.
 
-Quand activé, Cilium implémente lui-même les Services Kubernetes via eBPF :
+Vérifie : `kubectl get nodes` → les nodes passent `Ready` dès que Cilium a programmé les interfaces.
 
-```
-   AVANT (kube-proxy iptables)        AVEC (Cilium eBPF)
+## 🧠 Pourquoi `kubeProxyReplacement=true` change la performance
 
-   Pod ──► Service ClusterIP          Pod ──► Service ClusterIP
-              │                                  │
-              ▼                                  ▼
-       iptables chains                     ┌──────────┐
-       (linéaire O(N))                     │  eBPF    │
-       PREROUTING                          │  hash    │  ← O(1)
-       KUBE-SERVICES                       │  lookup  │
-       KUBE-SVC-XXX                        └────┬─────┘
-       KUBE-SEP-XXX                             ▼
-              │                              Pod cible
-              ▼
-       Pod cible
-```
+La différence entre kube-proxy (iptables) et Cilium (eBPF) est fondamentalement algorithmique. kube-proxy traduit chaque Service Kubernetes en une chaîne de règles iptables traversées linéairement à chaque paquet. Avec 1000 Services, un paquet peut traverser des milliers de règles. Avec Cilium, chaque Service est une entrée dans une hash map BPF — la recherche est O(1), indépendamment du nombre de Services.
 
-Conséquence concrète : sur un cluster avec 5000 Services, la latence d'un appel reste constante avec Cilium ; avec iptables, elle augmente linéairement (O(N) sur la chaîne).
+<Mermaid chart={`
+flowchart LR
+  subgraph iptables ["kube-proxy (iptables) — O(N)"]
+    direction TB
+    P1[Paquet] --> R1[Règle 1] --> R2[Règle 2] --> R3[...] --> RN[Règle N] --> Dest1[Pod cible]
+  end
+  subgraph ebpf ["Cilium eBPF — O(1)"]
+    direction TB
+    P2[Paquet] --> BPF[BPF hash map] --> Dest2[Pod cible]
+  end
+`} caption="Routing de Service : linéaire iptables vs. hash O(1) eBPF" />
 
 ## 📋 Étape 4 — Ouvrir Hubble UI
 
+Hubble Relay et l'UI ont déjà été activés à l'étape 3 (`hubble.relay.enabled` et `hubble.ui.enabled`). Vérifie qu'ils tournent, puis ouvre un port-forward :
+
 ```bash
-cilium hubble enable --ui
-cilium hubble ui  # ouvre un port-forward
+cilium status        # la ligne Hubble doit être "OK"
+cilium hubble ui     # ouvre automatiquement un port-forward vers le service hubble-ui
 ```
 
-Va sur http://localhost:12000 → tu vois en temps réel **chaque flux** entre pods, classé par namespace.
+`cilium hubble ui` crée un port-forward `kubectl` vers le Service `hubble-ui` du namespace `kube-system` et ouvre ton navigateur. Va sur http://localhost:12000 → tu vois en temps réel **chaque flux** entre pods, classé par namespace.
+
+> 💡 Si tu pilotes le cluster en SSH (pas de navigateur sur la VM), lance plutôt `kubectl port-forward -n kube-system svc/hubble-ui 12000:80 --address 0.0.0.0` puis ouvre `http://192.168.1.20:12000` depuis ton poste.
 
 ## 📋 Étape 5 — Déployer une app test avec NetworkPolicy
 
@@ -262,6 +287,8 @@ spec:
         - ports: [{ port: "80", protocol: TCP }]
 ```
 
+La logique de ces deux policies est additive : `deny-all-ingress` sélectionne les pods `app=whoami` et déclare une liste d'ingress **vide** — ce qui signifie "aucun flux autorisé". La deuxième policy `allow-client` ajoute une exception explicite uniquement pour les pods avec le label `run=client`, uniquement sur le port 80/TCP. Cilium applique la politique la plus permissive qui correspond : aucun flux n'est autorisé sauf ce que `allow-client` liste.
+
 ```bash
 kubectl apply -f deny-all-then-allow.yaml
 kubectl -n demo exec client -- curl -s --max-time 3 whoami
@@ -278,6 +305,8 @@ kubectl -n demo run snoop --rm -it --image=curlimages/curl --command -- curl -s 
 Dans Hubble UI tu vois deux flows :
 - 🟢 `demo/client → demo/whoami` : ALLOWED
 - 🔴 `demo/snoop → demo/whoami` : DROPPED `policy-denied`
+
+La valeur de Hubble ici : `timeout` vu du pod ne te dit pas *pourquoi* ça timeout (policy ? DNS ? pod down ?). Hubble te donne le verdict précis `policy-denied` — tu sais exactement ce qui bloque sans avoir à deviner.
 
 ## 🔬 Snapshot post-lab
 

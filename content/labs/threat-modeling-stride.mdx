@@ -58,20 +58,52 @@ quiz:
 
 ## 🧠 Pourquoi le threat modeling avant de coder ?
 
-90% des vulnérabilités graves viennent de **décisions d'architecture**, pas de bugs d'implémentation. Un bug XSS se patche en 5 min. Une absence de séparation des privilèges nécessite de réécrire des services entiers.
+Une grande part des vulnérabilités les plus graves vient de **décisions d'architecture**, pas de bugs d'implémentation ponctuels. Un bug XSS se patche en 5 minutes. Une absence de séparation des privilèges, un secret partagé entre tous les services, une boundary manquante : ça nécessite de réécrire des services entiers. La règle empirique (popularisée par les travaux de Barry Boehm sur le coût des défauts logiciels) veut que le coût de correction d'une faille augmente d'un ordre de grandeur à chaque phase du cycle de développement : ce qui coûte ~1 heure en phase design peut coûter 100× plus une fois en production.
 
-Le threat modeling intervient **avant** que le code existe — au moment du design — quand changer une décision coûte 100× moins cher.
+Le threat modeling intervient **avant** que le code existe — au moment du design — quand changer une décision coûte 100× moins cher. Ce n'est pas de la théorie abstraite : c'est une session de travail structurée (2-4 heures) qui produit une liste de menaces classifiées et un backlog de contre-mesures. L'output est directement actionnable par l'équipe de développement.
 
-```
-   Coût de correction d'une faille selon le moment :
+STRIDE, développé par des ingénieurs de Microsoft dans les années 2000, est la méthode la plus répandue pour structurer cette analyse. Elle force à parcourir systématiquement 6 catégories de menaces sur chaque flux de données d'un système — évitant les angles morts que l'intuition laisse souvent. La valeur de STRIDE n'est pas dans les 6 lettres de l'acronyme, mais dans la discipline de **couvrir chaque flux, catégorie par catégorie**.
 
-   Design     ┃ ▓ 1×
-   Code       ┃ ▓▓▓ 6×
-   Test       ┃ ▓▓▓▓▓▓▓▓ 15×
-   Production ┃ ▓▓▓▓▓▓▓▓▓▓▓▓▓▓▓▓▓▓▓▓▓▓▓▓▓▓▓▓▓▓▓▓▓▓▓▓▓ 100×
-              └────────────────────────────────────────►
-                              Temps
-```
+### Les 6 catégories STRIDE : propriété brisée et exemple concret
+
+Chaque lettre de STRIDE correspond à une propriété de sécurité que la menace cherche à violer. Connaître la propriété ciblée aide à identifier la contre-mesure naturelle :
+
+| Catégorie | Propriété brisée | Exemple concret | Contre-mesure typique |
+|---|---|---|---|
+| **S**poofing | Authenticité | Se faire passer pour l'utilisateur admin via un token JWT forgé | MFA, asymmetric signing (RS256), mTLS |
+| **T**ampering | Intégrité | Modifier un paquet en transit pour changer le montant d'une transaction | TLS (HMAC intégré), signatures numériques, checksums |
+| **R**epudiation | Non-répudiation | Prétendre ne pas avoir effacé les logs incriminants | Logs append-only, timestamps signés, audit trail cryptographique |
+| **I**nformation disclosure | Confidentialité | Stack trace exposant le chemin du fichier de config en prod | Error handling uniformisé, pas d'IDs séquentiels prévisibles |
+| **D**enial of service | Disponibilité | Flood de requêtes pour épuiser les threads du serveur web | Rate limiting, circuit breakers, WAF |
+| **E**levation of privilege | Autorisation | Exploiter une IDOR pour accéder aux données d'un autre utilisateur | Vérification d'autorisation côté serveur, RBAC, Row Level Security |
+
+La propriété brisée est la clé : si vous cherchez des contre-mesures contre le **Spoofing**, vous cherchez des mécanismes d'**authentification**. Contre le **Tampering**, des mécanismes d'**intégrité**. Cette correspondance propriété-solution n'est pas coïncidentielle — STRIDE a été conçu pour mapper directement vers les catégories de contrôles de sécurité.
+
+### STRIDE-per-element : toutes les menaces ne s'appliquent pas partout
+
+Une finesse souvent ignorée : selon le **type d'élément** du DFD, seul un sous-ensemble des 6 catégories est pertinent. C'est ce qu'on appelle *STRIDE-per-element*, et ça évite de perdre du temps à chercher du « Repudiation » sur un flux de données. Le mapping de référence (Microsoft) :
+
+| Type d'élément du DFD | S | T | R | I | D | E |
+|---|:-:|:-:|:-:|:-:|:-:|:-:|
+| **External entity** (utilisateur, API tierce) | ✔ | | ✔ | | | |
+| **Process** (service, fonction) | ✔ | ✔ | ✔ | ✔ | ✔ | ✔ |
+| **Data flow** (flux réseau) | | ✔ | | ✔ | ✔ | |
+| **Data store** (DB, cache, fichier) | | ✔ | ✔* | ✔ | ✔ | |
+
+\* Repudiation sur un data store concerne surtout les logs (un store qui *est* un journal d'audit : peut-on le falsifier ?). Les **processus** sont les éléments les plus exposés — ils cumulent les 6 catégories — d'où l'attention à leur porter en priorité.
+
+### Le processus complet de threat modeling
+
+<Pipeline steps={[
+  "Dessiner le DFD (Data Flow Diagram)",
+  "Identifier les trust boundaries",
+  "Énumérer les menaces STRIDE par flux",
+  "Scorer avec likelihood × impact",
+  "Définir les contre-mesures",
+  "Intégrer dans le backlog"
+]} />
+
+L'étape critique et la plus souvent bâclée est la première : le **Data Flow Diagram**. Sans un DFD précis, l'analyse STRIDE devient une liste de menaces génériques sans ancrage dans l'architecture réelle. Le DFD doit montrer : les acteurs externes (utilisateurs, systèmes tiers), les processus (services, composants), les data stores (bases de données, caches, fichiers), et les flux de données entre eux. C'est intentionnellement différent d'un diagramme d'architecture infrastructure — l'objectif est de tracer comment les données circulent, pas comment les serveurs sont connectés.
 
 ## 🎯 Objectif
 
@@ -87,34 +119,27 @@ On va appliquer ça à un cas concret : une API de chat avec auth JWT.
 
 **Contexte** : une app web où des utilisateurs se connectent et envoient des messages, stockés en DB, livrés en temps réel via WebSocket.
 
-```
-                  ┌─────────┐
-                  │  User   │  (browser)
-                  └────┬────┘
-                       │ HTTPS
-                       ▼
-              ┌────────────────┐
-              │   API Gateway  │
-              │  (rate limit)  │
-              └───┬─────────┬──┘
-                  │         │
-        REST API  │         │ WebSocket
-                  ▼         ▼
-          ┌──────────┐  ┌──────────┐
-          │ Auth svc │  │ Chat svc │
-          │ (JWT)    │  │          │
-          └────┬─────┘  └────┬─────┘
-               │              │
-               └──────┬───────┘
-                      ▼
-                ┌──────────┐
-                │ Postgres │
-                └──────────┘
-```
+<Topology
+  nodes={[
+    { id: 'user', kind: 'user', label: 'User (browser)', col: 1, row: 1, accent: 'c' },
+    { id: 'gw', kind: 'edge', label: 'API Gateway', col: 2, row: 1, accent: 'c' },
+    { id: 'auth', kind: 'service', label: 'Auth svc (JWT)', col: 3, row: 0, accent: 'a' },
+    { id: 'chat', kind: 'service', label: 'Chat svc (WS)', col: 3, row: 2, accent: 'a' },
+    { id: 'db', kind: 'db', label: 'PostgreSQL', col: 4, row: 1, accent: 'v' },
+  ]}
+  edges={[
+    { from: 'user', to: 'gw', kind: 'sync', label: 'HTTPS' },
+    { from: 'gw', to: 'auth', kind: 'sync', label: 'REST' },
+    { from: 'gw', to: 'chat', kind: 'sync', label: 'WS' },
+    { from: 'auth', to: 'db', kind: 'data', label: 'SQL' },
+    { from: 'chat', to: 'db', kind: 'data', label: 'SQL' },
+  ]}
+  caption="DFD simplifié : API de chat avec Auth JWT et base de données centralisée"
+/>
 
 ## 📐 Étape 2 — Tracer les trust boundaries
 
-Une trust boundary apparaît partout où **le niveau de confiance change** :
+Une trust boundary apparaît partout où **le niveau de confiance change**. Le principe est simple : ce qui vient de l'extérieur de la boundary est suspect par défaut, ce qui vient de l'intérieur bénéficie d'un niveau de confiance plus élevé. Ces boundaries sont les points de contrôle où des mécanismes d'authentification, de validation, ou de filtrage doivent être appliqués.
 
 ```
                   ┌─────────┐
@@ -144,7 +169,9 @@ Une trust boundary apparaît partout où **le niveau de confiance change** :
                 └──────────┘
 ```
 
-Chaque **flux qui traverse une boundary** doit être analysé avec STRIDE.
+Chaque **flux qui traverse une boundary** doit être analysé avec STRIDE. Un flux interne qui ne traverse pas de boundary (ex : communication entre deux composants du même service dans le même process) est moins prioritaire, car l'attaquant devrait déjà avoir compromis l'environnement pour l'intercepter.
+
+L'erreur classique est de ne modéliser que la boundary Internet/DMZ et d'ignorer les boundaries internes. Pourtant, une large part des compromissions sérieuses impliquent du **mouvement latéral** : l'attaquant entre par un service exposé, puis pivote vers des cibles internes (c'est tout le sens des tactiques *Lateral Movement* TA0008 de MITRE ATT&CK). C'est la boundary App/DB — et la segmentation réseau interne — qui limite les dégâts une fois un service de front compromis. Modéliser uniquement le périmètre, c'est le modèle « château fort » : dur en surface, mou à l'intérieur.
 
 ## 🔬 Étape 3 — Appliquer STRIDE flux par flux
 
@@ -160,6 +187,8 @@ Pour chaque catégorie, on se demande : *est-ce une menace plausible ici ? Quell
 | **I**nfo disclosure | Headers/erreurs leakent des infos ? | Pas de stack trace en prod, pas d'IDs séquentiels prévisibles |
 | **D**oS | User flood l'API ? | Rate limit par IP + par token au gateway |
 | **E**oP | Token JWT peut être forgé pour role=admin ? | JWT signé asymétriquement (RS256 pas HS256), validation stricte des claims |
+
+La menace EoP via JWT mérite une attention particulière. Avec HMAC-SHA256 (`alg: HS256`), le même secret signe et vérifie — si un service back-end a accès au secret de vérification, il peut aussi forger des tokens. Avec RSA ou ECDSA (`alg: RS256`, `alg: ES256`), l'auth service détient la **clé privée** (signe), les autres services utilisent seulement la **clé publique** (vérifient). Un service compromis ne peut pas créer un token admin.
 
 ### Sur Boundary 2 (Gateway → microservices)
 
@@ -198,6 +227,8 @@ Au lieu de DREAD (subjectif), une matrice simple :
               │        │        │        │
               └────────┴────────┴────────┘
 ```
+
+La matrice likelihood × impact est délibérément simple (3×3 = 9 cases). L'objectif n'est pas une précision mathématique — c'est de **distinguer le critique du négligeable** pour prioriser le backlog. Deux analystes qui scorent la même menace indépendamment ne doivent pas diverger de plus d'une case — si c'est le cas, c'est un signal que la menace est mal définie et nécessite plus d'investigation.
 
 Exemple de hiérarchisation après l'analyse :
 

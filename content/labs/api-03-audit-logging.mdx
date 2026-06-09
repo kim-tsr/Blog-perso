@@ -62,23 +62,37 @@ quiz:
 
 > 📚 **Série « API sécurisée from zero »** — Lab 3 / 4. L'API du Lab #2 a tout ce qu'il faut pour fonctionner. Maintenant elle doit produire les preuves de ce qu'elle fait.
 
-## 🧠 Théorie : du log "printf" au log "events" structurés
+## 🧠 Théorie : ce qui fait un audit log forensiquement utile
 
-```
-   Log printf (classique)            Log structuré (SRE / DevSecOps)
+Un log de sécurité n'est pas un log d'application ordinaire. Sa fonction primaire n'est pas le debug en temps réel — c'est la **reconstitution après incident**. Quand quelque chose tourne mal (intrusion, escalade de privilèges, fuite de données), l'audit log est la seule source de vérité sur ce qui s'est passé, qui l'a fait, et dans quel ordre. Sa qualité détermine si l'enquête prend 20 minutes ou 3 jours.
 
-   "User alice failed login         { "ts": "2026-06-01T10:00:00Z",
-    from 1.2.3.4 at 10:00"           "level": "warn",
-                                     "event": "auth.failure",
-                                     "user": "alice",
-                                     "ip": "1.2.3.4",
-                                     "reason": "invalid_password",
-                                     "trace_id": "abc123" }
+Trois propriétés distinguent un audit log forensiquement utile :
 
-   ✗ grep + regex fragile           ✓ filtrable par champ
-   ✗ types perdus                   ✓ types préservés
-   ✗ log injection facile           ✓ neutralisation native
-```
+**Immuabilité** : un attaquant qui a compromis un service tentera d'effacer ou de modifier les logs. En production, les logs doivent être expédiés en temps réel vers un système séparé (Loki, Elasticsearch, S3) que le service n'a pas le droit de modifier. L'idéal est un pipeline unidirectionnel : le service ne peut qu'écrire, jamais lire ni supprimer.
+
+**Corrélation** : chaque log en isolation ne dit rien. Ce qui compte, c'est la séquence — "auth.success à 14:30:01, rbac.denied sur /admin à 14:30:02, rate_limit.exceeded à 14:30:05 depuis la même IP". Sans un identifiant commun (le `trace_id`) qui relie ces événements entre eux et à travers les services, la reconstitution est impossible à l'échelle.
+
+**Richesse sémantique** : un log texte `"Alice a échoué à se connecter"` répond à "quoi". Un log structuré JSON avec `user`, `ip`, `reason`, `path`, `trace_id`, `ts` répond à "quoi, qui, d'où, pourquoi, et dans quel contexte". La différence est critique pour les règles de détection automatique : un SIEM ne peut pas raisonner sur du texte libre, il doit pouvoir filtrer sur des champs typés.
+
+### Du log "printf" au log "événement"
+
+<Mermaid chart={`
+graph TD
+  A["printf: 'User alice failed login from 1.2.3.4'"] --> B[Problèmes]
+  B --> B1[grep + regex fragile]
+  B --> B2[types perdus, pas de timestamp structuré]
+  B --> B3[log injection possible]
+  B --> B4[pas filtrable par champ]
+
+  C["slog JSON: {event, user, ip, reason, trace_id, ts}"] --> D[Avantages]
+  D --> D1[filtrable par champ en LogQL]
+  D --> D2[types préservés - alertes sur valeurs]
+  D --> D3[neutralisation native - plus d'injection]
+  D --> D4[corrélable via trace_id]
+
+  style A fill:#1a0a0a,stroke:#804040
+  style C fill:#0a1a0a,stroke:#408040
+`} caption="Log texte vs log structuré — la différence détermine la qualité des détections" />
 
 ### Anatomie d'un log de sécurité bien fait
 
@@ -101,6 +115,16 @@ quiz:
 - Ingestion dans Loki + dashboard Grafana
 - Requêtes LogQL pour la chasse aux anomalies
 
+## 📐 Pipeline d'ingestion des logs
+
+<Pipeline steps={[
+  { label: "API Go", hint: "slog.NewJSONHandler → stdout", accent: "c" },
+  { label: "Promtail", hint: "collecte stdout / fichiers", accent: "v" },
+  { label: "Loki", hint: "stockage + index par labels", accent: "v" },
+  { label: "Grafana", hint: "LogQL explore + alertes", accent: "a" },
+  { label: "Alertmanager", hint: "Slack / PagerDuty / SOAR", accent: "s" },
+]} caption="Pipeline de log — chaque étape est découplée ; Promtail peut être remplacé par Fluent Bit, Vector, ou Alloy" />
+
 ## 📋 Étape 1 — slog (Go 1.21+) en JSON
 
 ```go
@@ -122,9 +146,15 @@ func Init() {
   Logger = slog.New(h)
 }
 
+// CtxKey est exporté pour que le middleware Trace et le logger partagent
+// EXACTEMENT la même clé de contexte (sinon le lookup renvoie "" en silence).
+type CtxKey string
+
+const TraceIDKey CtxKey = "trace_id"
+
 // Helper : log un événement de sécurité avec champs courants
 func SecEvent(ctx context.Context, event string, attrs ...slog.Attr) {
-  traceID, _ := ctx.Value("trace_id").(string)
+  traceID, _ := ctx.Value(TraceIDKey).(string)
   base := []slog.Attr{
     slog.String("event", event),
     slog.String("trace_id", traceID),
@@ -132,6 +162,8 @@ func SecEvent(ctx context.Context, event string, attrs ...slog.Attr) {
   Logger.LogAttrs(ctx, slog.LevelWarn, "sec_event", append(base, attrs...)...)
 }
 ```
+
+`slog.NewJSONHandler(os.Stdout, ...)` écrit un objet JSON par ligne sur stdout. Écrire sur stdout (et non dans un fichier) est la pratique "12-factor app" : le process ne gère pas la rotation, la rétention, ni l'expédition des logs — c'est la responsabilité de l'orchestrateur (Docker, Kubernetes) qui capture stdout et le passe à un agent de collecte. `slog.LevelInfo` comme niveau minimum évite que les logs debug inondent le SIEM en production. `LogAttrs` est plus performant que `Log` car il évite l'allocation d'une `[]any` intermédiaire.
 
 ## 📋 Étape 2 — Middleware trace_id
 
@@ -144,11 +176,19 @@ import (
   "crypto/rand"
   "encoding/hex"
   "net/http"
+
+  "yourapp/logging" // ajuste au chemin de ton module
 )
+
+// On réutilise la clé typée définie dans le package logging (logging.TraceIDKey)
+// pour que le logger relise la même valeur. Une clé string nue ("trace_id")
+// déclencherait un avertissement go vet et risquerait une collision inter-packages.
 
 func newTraceID() string {
   b := make([]byte, 8)
-  rand.Read(b)
+  if _, err := rand.Read(b); err != nil {
+    return "0000000000000000" // crypto/rand n'échoue quasiment jamais
+  }
   return hex.EncodeToString(b)
 }
 
@@ -157,38 +197,58 @@ func Trace(next http.HandlerFunc) http.HandlerFunc {
     tid := r.Header.Get("X-Trace-Id")
     if tid == "" { tid = newTraceID() }
     w.Header().Set("X-Trace-Id", tid)
-    ctx := context.WithValue(r.Context(), "trace_id", tid)
+    ctx := context.WithValue(r.Context(), logging.TraceIDKey, tid)
     next(w, r.WithContext(ctx))
   }
 }
 ```
 
-Place-le **en premier** dans la chaîne. Tous les middlewares suivants doivent lire `ctx.Value("trace_id")` pour leurs logs.
+Ce middleware gère deux cas : si le client passe déjà un `X-Trace-Id` (propagé depuis un service upstream ou un API gateway), on le réutilise — c'est essentiel pour que le trace traverse toute l'architecture. Si le client n'en a pas, on en génère un. `crypto/rand` (non déterministe, basé sur l'entropie OS) garantit qu'il est imprévisible — un attaquant ne peut pas deviner les trace_id des autres utilisateurs. `context.WithValue` propage le trace_id dans tout le call stack sans avoir à le passer explicitement à chaque fonction.
+
+> ⚠️ **Clé de contexte typée, pas une string nue** : on stocke avec `logging.TraceIDKey` (type `CtxKey`), pas avec la string `"trace_id"`. Deux raisons : `go vet` interdit les clés `context` de type string de base (risque de collision entre packages), et surtout le logger DOIT relire avec la même clé typée — `ctx.Value("trace_id")` (string) ne matcherait pas une valeur posée avec `CtxKey("trace_id")` et renverrait silencieusement `""`. Un trace_id vide dans tous les logs est un piège classique difficile à diagnostiquer.
+
+> 🔒 **Faut-il faire confiance au `X-Trace-Id` du client ?** En périmètre interne (gateway → services), oui. Exposé directement à Internet, valide-le (longueur, charset hex) ou ignore-le : un attaquant pourrait injecter un trace_id contenant des caractères de contrôle pour polluer tes logs (cf. log injection, plus bas).
+
+Place-le **en premier** dans la chaîne. Tous les middlewares suivants lisent le trace_id via `logging.SecEvent` (qui fait le `ctx.Value(logging.TraceIDKey)` pour eux) — ils n'ont rien à manipuler directement.
 
 ## 📋 Étape 3 — Logger les événements sensibles
 
 Mise à jour du middleware auth du lab #1 :
 
+> ⚠️ On reprend bien **toutes** les options de vérification du Lab #1 (`WithIssuer`, `WithAudience`, `WithExpirationRequired`) — le but ici est d'**ajouter le logging**, pas de relâcher la sécurité. Une erreur fréquente quand on instrumente un middleware existant est de le réécrire partiellement et de perdre une garde.
+
 ```go
 func Auth(next http.HandlerFunc) http.HandlerFunc {
   return func(w http.ResponseWriter, r *http.Request) {
+    r.Header.Del("X-User"); r.Header.Del("X-Role") // anti-spoof (cf. Lab #1)
     raw := strings.TrimPrefix(r.Header.Get("Authorization"), "Bearer ")
-    tok, err := jwt.Parse(raw, keyFunc, jwt.WithValidMethods([]string{"RS256"}))
+    tok, err := jwt.Parse(raw, keyFunc,
+      jwt.WithValidMethods([]string{"RS256"}),
+      jwt.WithIssuer("https://api.homelab.lan"),
+      jwt.WithAudience("homelab-api"),
+      jwt.WithExpirationRequired())
     if err != nil || !tok.Valid {
+      reason := "invalid token"
+      if err != nil { reason = err.Error() } // err peut être nil si tok.Valid==false seul
       logging.SecEvent(r.Context(), "auth.failure",
         slog.String("ip", r.RemoteAddr),
-        slog.String("reason", err.Error()),
+        slog.String("reason", reason),
         slog.String("path", r.URL.Path))
       http.Error(w, "invalid token", 401); return
     }
-    claims := tok.Claims.(jwt.MapClaims)
+    claims, _ := tok.Claims.(jwt.MapClaims)
+    sub, _ := claims["sub"].(string)
     logging.SecEvent(r.Context(), "auth.success",
-      slog.String("user", claims["sub"].(string)),
+      slog.String("user", sub),
       slog.String("ip", r.RemoteAddr))
-    // ... pose X-User puis next
+    // ... pose X-User (= sub) puis next
   }
 }
 ```
+
+On logue `auth.failure` avec l'IP, la raison technique, et le path tenté. La raison (`err.Error()`) est précieuse en post-mortem mais ne doit pas être renvoyée au client — deux messages différents : un pour le log (verbeux) et un pour la réponse HTTP (minimal). Le path tenté aide à distinguer une attaque ciblée sur `/admin` d'une tentative générique.
+
+> ⚠️ **`r.RemoteAddr` ≠ vraie IP client derrière un proxy**. `r.RemoteAddr` contient `ip:port` et, derrière un reverse-proxy/load-balancer, c'est l'IP du **proxy**, identique pour tous les clients — la détection par IP du Lab #4 serait alors inutile. En présence d'un proxy de confiance, lis `X-Forwarded-For` (premier élément) ou `X-Real-IP`, mais **uniquement** si le proxy est fiable (sinon le client peut forger l'en-tête). Extrais aussi l'IP seule via `net.SplitHostPort(r.RemoteAddr)` pour que les agrégations LogQL `by (ip)` soient propres.
 
 Et le RBAC :
 
@@ -203,16 +263,23 @@ if !rbac.Can(role, action) {
 }
 ```
 
+Loguer les refus RBAC avec l'action demandée et le rôle réel est clé pour la détection de Lab #4 : un user authentifié qui tente en série des actions au-delà de son rôle est un signal de **reconnaissance de permissions** (MITRE T1087). Sans ce log, ce pattern est invisible.
+
 ## 📋 Étape 4 — Ingestion vers Loki
 
 Si tu as la stack du Lab #4 homelab :
 
-```yaml
-# Sur le host de l'API, configurer promtail (déjà déployé via DaemonSet en cluster)
-# Pour un test rapide en local :
-docker run -d --name promtail -v /var/log:/var/log \
-  grafana/promtail:2.10.0 -config.file=/etc/promtail/config.yml
+```bash
+# Sur le host de l'API, configurer un agent de collecte (déjà déployé via
+# DaemonSet en cluster). Pour un test rapide en local — on monte aussi le
+# fichier de config, sinon le conteneur ne sait pas où pousser :
+docker run -d --name promtail \
+  -v /var/log:/var/log \
+  -v "$PWD/promtail-config.yml:/etc/promtail/config.yml" \
+  grafana/promtail:3.1.1 -config.file=/etc/promtail/config.yml
 ```
+
+> 💡 Promtail est en fin de vie : Grafana pousse désormais **Grafana Alloy** comme collecteur unifié (logs + métriques + traces). Pour un nouveau déploiement, préfère Alloy ou Vector ; la logique de pipeline reste identique.
 
 Ou directement, depuis Go, push vers Loki HTTP :
 
@@ -220,6 +287,8 @@ Ou directement, depuis Go, push vers Loki HTTP :
 // (simplifié) — en prod préférer un agent (promtail, fluent-bit)
 http.Post("http://loki:3100/loki/api/v1/push", "application/json", payload)
 ```
+
+Le push direct depuis le code applicatif est utile pour les tests mais déconseillé en production : si Loki est lent ou indisponible, le call bloque ou échoue et impacte la requête de l'utilisateur. L'agent (Promtail, Fluent Bit, Grafana Alloy) découple l'application du système de log : il lit stdout de manière asynchrone, gère les retries, et absorbe les pics de débit.
 
 ## 📋 Étape 5 — Requêtes LogQL utiles
 
@@ -241,6 +310,8 @@ topk(10,
 )
 ```
 
+`| json` parse chaque ligne de log comme JSON et expose ses champs comme des labels temporaires pour le filtrage. `count_over_time` compte les occurrences dans une fenêtre glissante. `sum by (ip)` agrège par valeur du champ `ip`. `topk(10, ...)` ne retient que les 10 plus grandes valeurs — utile pour les dashboards, mais aussi pour la détection : si une IP dépasse un seuil, elle remonte en tête.
+
 ### Brute force suspect (>50 échecs/5min depuis une IP)
 
 ```logql
@@ -248,6 +319,8 @@ sum by (ip) (
   count_over_time({app="api"} | json | event="auth.failure" [5m])
 ) > 50
 ```
+
+Cette requête peut être placée directement dans une règle d'alerte Loki → Alertmanager. Le seuil de 50 est à calibrer sur le volume normal de l'application — trop bas = faux positifs, trop haut = brute force lent non détecté.
 
 → tu pousses ça dans un Alertmanager rule (cf. Lab #4 homelab) → notif Slack.
 
@@ -263,7 +336,7 @@ TID=$(logcli query '{app="api"} | json | user="alice"' --from="2026-06-01T14:30:
 logcli query "{app=\"api\"} | json | trace_id=\"$TID\""
 ```
 
-Tu remontes : auth.success → rbac.denied → handler.error → ... en quelques secondes. Sans trace_id, c'est une heure de grep.
+La puissance du `trace_id` : en deux requêtes, tu as toute la timeline de la requête d'Alice — auth, rate-limit, RBAC, handler — dans l'ordre chronologique, même si les logs viennent de plusieurs instances du service. Sans `trace_id`, corréler ces événements nécessite de croiser les timestamps (imprécis à la milliseconde près), les IPs (non uniques derrière un load balancer), et les usernames (pas disponibles avant auth). C'est une heure de grep contre 10 secondes de LogQL.
 
 ## 🧠 Anti-patterns à éviter
 

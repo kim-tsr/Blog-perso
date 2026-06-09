@@ -58,32 +58,38 @@ quiz:
 
 ## 🧠 Théorie : pourquoi dissocier contrôle et données ?
 
-```
-   SWITCH TRADITIONNEL                  SWITCH SDN (OpenFlow)
-   ───────────────────                  ─────────────────────
-   
-   ┌──────────────────────┐             ┌──────────────────────┐
-   │  Control plane       │             │  Control plane       │
-   │  (CPU local)         │             │  (silicon vide)      │
-   │  - routing daemons   │             │  - reçoit flow-mods  │
-   │  - STP, LLDP, BGP    │             │  - retourne stats    │
-   ├──────────────────────┤             ├──────────────────────┤
-   │  Data plane (ASIC)   │             │  Data plane (ASIC)   │
-   │  - forward MAC table │             │  - flow tables       │
-   └──────────────────────┘             └──────────┬───────────┘
-                                                   │ OpenFlow
-                                                   ▼
-                                        ┌────────────────────┐
-                                        │  CONTROLLER (sw)   │
-                                        │  - Ryu, ONOS, ODL  │
-                                        │  - décide global   │
-                                        └────────────────────┘
-   
-   Configurer 50 switches indépendants  Programmer UN contrôleur
-   → BGP, OSPF, STP éparpillés          → policy globale
-```
+Dans le networking traditionnel, chaque switch ou routeur contient **deux plans fonctionnels** fusionnés dans le même équipement : le **control plane** (les protocoles qui décident de la topologie — BGP, OSPF, STP, LLDP) et le **data plane** (le matériel ASIC qui fait effectivement passer les paquets à la vitesse du fil). Cette fusion est la norme depuis les années 1980 et a une logique historique : les équipements réseau étaient des boîtes noires autonomes, indépendantes les unes des autres.
+
+Le problème apparaît à l'échelle. Imaginons 50 switches dans un datacenter, et une politique de sécurité qui dit « interdire tout trafic entre le VLAN 10 (dev) et le VLAN 20 (prod) ». Avec le modèle traditionnel, il faut configurer des ACLs sur chacun des 50 switches, maintenir cette configuration en synchronisation, et recommencer à chaque changement d'architecture. La cohérence est garantie par la rigueur humaine — source de bugs et d'incidents.
+
+Le SDN (Software Defined Networking) résout ce problème en **centralisant le control plane dans un logiciel** et en laissant les switches comme de simples exécuteurs d'instructions. Le contrôleur voit la topologie globale, calcule les politiques optimales, et pousse les règles vers les switches via le protocole OpenFlow. Un seul changement dans le contrôleur se propage instantanément à toute la fabric.
+
+### Control plane vs data plane : anatomie
+
+<Mermaid chart={`
+graph TB
+    subgraph trad["Switch traditionnel"]
+        cp1["Control plane (CPU local)\nBGP · OSPF · STP · LLDP\nMAC learning · ARP"]
+        dp1["Data plane (ASIC)\nForwarding table\nVitesse du fil"]
+        cp1 <--> dp1
+    end
+    subgraph sdn["Architecture SDN"]
+        ctrl["Contrôleur SDN\n(Ryu / ONOS / ODL)\nPolitiques globales\nVision topologie complète"]
+        sw1["Switch OVS 1\nDumb data plane\nFlow tables only"]
+        sw2["Switch OVS 2\nDumb data plane\nFlow tables only"]
+        sw3["Switch OVS 3\nDumb data plane\nFlow tables only"]
+        ctrl -->|OpenFlow flow-mods| sw1
+        ctrl -->|OpenFlow flow-mods| sw2
+        ctrl -->|OpenFlow flow-mods| sw3
+        sw1 -->|packet-in / stats| ctrl
+        sw2 -->|packet-in / stats| ctrl
+        sw3 -->|packet-in / stats| ctrl
+    end
+`} caption="Fusion control+data plane dans le switching traditionnel vs séparation SDN avec contrôleur centralisé" />
 
 ### Anatomie d'une flow rule
+
+Une **flow rule** OpenFlow est l'unité de base du forwarding SDN. Elle se compose de trois parties indissociables :
 
 ```
    match                       action            priority
@@ -102,6 +108,44 @@ quiz:
 
 → pipeline : le paquet matche la 1ère règle (priority 100). S'il rate, il essaie la 50. S'il rate, action par défaut.
 
+Le champ **match** peut contenir jusqu'à une douzaine de champs L2-L4 : MAC source/destination, VLAN ID, EtherType, IP source/destination, protocole IP, ports TCP/UDP. Les actions possibles sont : `output` (forwarder vers un port physique ou virtuel), `drop` (ignorer silencieusement), `push VLAN`, `set field` (réécrire un champ), `goto table` (chaîner vers une autre flow table), `send to controller` (remonter le paquet pour décision centrale).
+
+La **priority** est critique : le switch parcourt sa flow table en ordre décroissant de priorité et applique la première règle qui matche. Une règle de drop à priorité 50 avec match sur une plage IP sera contournée si une règle plus spécifique à priorité 100 matche d'abord.
+
+### Le mécanisme packet-in / flow-mod
+
+<Mermaid chart={`
+sequenceDiagram
+    participant H as Host
+    participant S as Switch OVS
+    participant C as Contrôleur Ryu
+    H->>S: Paquet (1er d'un nouveau flow)
+    S->>S: Lookup dans flow table → aucun match
+    S->>C: packet-in (paquet encapsulé)
+    C->>C: Logique de décision\n(learning, policy check...)
+    C->>S: flow-mod (installe la règle)
+    C->>S: packet-out (retransmet le paquet original)
+    S->>H: Paquet forwardé
+    Note over S,C: Paquets suivants du même flow
+    H->>S: Paquet 2
+    S->>S: Match flow rule → action directe
+    S->>H: Forwardé sans invoquer le contrôleur
+`} caption="Pattern réactif OpenFlow : le contrôleur n'est consulté que pour le premier paquet d'un flow" />
+
+Ce mécanisme est clé pour la scalabilité. Le contrôleur n'est dans le **hot path** que pour le premier paquet de chaque flow. Tous les paquets suivants sont traités directement par le switch ASIC à la vitesse du fil, sans aller-retour réseau vers le contrôleur. La latence n'est introduite qu'une seule fois par flow, pas paquet par paquet.
+
+### SDN pour DevSecOps : quarantaine réactive
+
+L'apport le plus puissant du SDN en contexte sécurité est la **microsegmentation dynamique** : la capacité de modifier instantanément les politiques de forwarding en réponse à des événements de sécurité. Dans le modèle traditionnel, isoler un host compromis signifie « ouvrir un ticket réseau, changer la VLAN manuellement, attendre 15-30 minutes ». Avec SDN :
+
+<Pipeline steps={[
+  "EDR détecte comportement anormal",
+  "SOAR reçoit l'alerte",
+  "SOAR appelle API REST du contrôleur",
+  "Contrôleur installe flow rule DROP pour le MAC source",
+  "Host isolé en < 100ms"
+]} />
+
 ## 🎯 Objectif
 
 1. Installer Open vSwitch + Ryu sur 1 VM.
@@ -113,19 +157,33 @@ quiz:
 
 ```bash
 sudo apt install openvswitch-switch mininet python3-pip
-pip install ryu==4.34
+
+# Ryu n'évolue plus (dernière release 4.34, fin 2019) et casse sur Python 3.10+.
+# Pour un lab reproductible en 2025, isolez-le dans un venv Python 3.9 :
+python3.9 -m venv ~/ryu-venv && source ~/ryu-venv/bin/activate
+pip install "ryu==4.34" "eventlet==0.30.2" "setuptools<58"
 
 ovs-vsctl --version
 ryu-manager --version
 ```
 
+Open vSwitch est un switch virtuel multi-couche (L2-L4) avec support OpenFlow 1.0 à 1.5. Mininet est un émulateur réseau qui crée des hosts Linux (namespaces réseau) reliés par des switches OVS virtuels — parfait pour des labs sans matériel physique. Ryu est un framework Python pour écrire des contrôleurs OpenFlow ; sa structure orientée événements le rend idéal pour prototyper des politiques de sécurité.
+
+> ⚠️ **Ryu est en fin de vie.** Le projet n'est plus maintenu et ses dépendances (`eventlet`, `distutils`, `collections.Mapping`) sont incompatibles avec Python 3.10+. Les pins ci-dessus (eventlet 0.30.2, setuptools < 58, venv Python 3.9) sont le contournement éprouvé. Pour un projet de production en 2025/2026, préférez son successeur **os-ken** (fork maintenu par OpenStack) ou un contrôleur opinionated comme **Faucet** (config YAML, lui-même bâti sur os-ken). Le modèle pédagogique (packet-in / flow-mod) reste rigoureusement identique.
+
 ## 📋 Étape 2 — Topologie mininet simple
 
 ```bash
-sudo mn --topo=single,3 --controller=remote --switch=ovsk,protocols=OpenFlow13
+# Ryu écoute par défaut sur 6633 ; on aligne donc Mininet sur ce port.
+sudo mn --topo=single,3 \
+        --controller=remote,ip=127.0.0.1,port=6633 \
+        --switch=ovsk,protocols=OpenFlow13
 # topology : 3 hosts (h1-h3) sur 1 switch (s1)
-# --controller=remote : OVS contactera le contrôleur sur 127.0.0.1:6633
 ```
+
+`--topo=single,3` crée une topologie en étoile : un switch central (s1) avec 3 hosts (h1, h2, h3) connectés. `--controller=remote` configure OVS pour se connecter à un contrôleur externe. `protocols=OpenFlow13` force l'utilisation d'OpenFlow 1.3 — indispensable pour les features avancées (actions de groupe, tables multiples, compteurs de métrologie).
+
+> 💡 **6633 vs 6653.** Historiquement OpenFlow utilisait le port **6633** (non officiel, hérité du contrôleur NOX). Depuis OF 1.3.1, le port assigné par l'IANA est **6653**. Ryu écoute encore sur 6633 par défaut, et Mininet récent utilise 6653 — d'où l'intérêt de spécifier explicitement `port=6633` des deux côtés pour éviter un contrôleur qui ne se connecte jamais (le symptôme classique : `dump-flows` reste vide et aucun `packet-in` n'arrive).
 
 Dans un autre terminal :
 
@@ -194,6 +252,10 @@ class L2Switch(app_manager.RyuApp):
         dp.send_msg(out)
 ```
 
+La méthode `install_default` est appelée lors de la connexion du switch au contrôleur (`CONFIG_DISPATCHER`). Elle installe une **table-miss flow entry** : un match wildcard (tout matche) à priorité 0 qui envoie chaque paquet non-matchant vers le contrôleur (`OFPP_CONTROLLER`). C'est le bootstrap : sans cette règle, les paquets dont l'adresse MAC de destination est inconnue seraient droppés silencieusement.
+
+La méthode `packet_in` implémente le **MAC learning** : à chaque paquet reçu, elle enregistre l'association `MAC source → port d'entrée` dans `self.mac_to_port`. Si la MAC destination est connue, elle installe une flow rule spécifique (`priority=1`) pour ce flow et envoie le paquet. Si inconnue, elle flood sur tous les ports (`OFPP_FLOOD`) — comportement identique à un switch L2 classique, mais piloté depuis le logiciel.
+
 ```bash
 ryu-manager l2_learning.py
 ```
@@ -207,9 +269,11 @@ sudo ovs-ofctl -O OpenFlow13 dump-flows s1
 
 ## 📋 Étape 4 — Règles policy "block sauf HTTP"
 
+Ces règles sont à installer **dans le handler `install_default`** (qui reçoit `dp`, `ofp`, `parser` au moment où le switch se connecte), juste après la table-miss. Important : leur priorité (100 et 50) doit rester **supérieure** aux flows MAC-learning de priorité 1, sinon le L2 switching court-circuiterait la politique.
+
 ```python
-# inside l2_learning, après install_default :
-# bloque tout entre h1 (port 1) et h2 (port 2) sauf TCP 80
+# À ajouter dans install_default, après la table-miss :
+# bloque tout entre h1 (10.0.0.1) et h2 (10.0.0.2) sauf TCP vers le port 80
 
 match = parser.OFPMatch(in_port=1, eth_type=0x0800, ipv4_dst="10.0.0.2",
                         ip_proto=6, tcp_dst=80)
@@ -225,12 +289,17 @@ mod = parser.OFPFlowMod(datapath=dp, priority=50, match=match, instructions=[])
 dp.send_msg(mod)
 ```
 
-Test dans mininet :
+Ces deux règles ensemble implémentent une **whitelist de protocole**. La règle à priorité 100 matche les paquets TCP vers le port 80 et les autorise (`output:2`). La règle à priorité 50 matche tous les paquets IP vers 10.0.0.2 — moins spécifique, donc priorité inférieure. Tout paquet qui arrive ici n'a pas matché la règle HTTP, donc il est droppé (`instructions=[]` = pas d'action = drop). Le mécanisme de priorité fait tout le travail.
+
+`eth_type=0x0800` est l'EtherType pour IPv4 — il est **obligatoire** dès qu'on matche un champ IP : OpenFlow exige que les prérequis soient présents dans le match (`ip_proto`/`tcp_dst` n'ont de sens que si `eth_type=0x0800`). Conséquence importante : les paquets ARP (`eth_type=0x0806`) ne matchent **aucune** de ces deux règles IP et tombent donc dans le L2-learning — la résolution d'adresses continue de fonctionner. `ip_proto=6` désigne TCP, `ip_proto=17` serait UDP.
+
+Test dans mininet — on lance d'abord un serveur web minimal sur h2 (sans serveur, le `curl` échouerait pour une raison sans rapport avec la politique) :
 
 ```bash
-mininet> h1 curl http://10.0.0.2:80   # OK
-mininet> h1 ping 10.0.0.2             # KO
-mininet> h1 ssh root@10.0.0.2          # KO
+mininet> h2 python3 -m http.server 80 &   # serveur HTTP sur h2:80
+mininet> h1 curl -m 3 http://10.0.0.2:80   # OK  (matche la règle priority 100)
+mininet> h1 ping -c 2 10.0.0.2             # KO  (ICMP droppé par priority 50)
+mininet> h1 curl -m 3 http://10.0.0.2:8080 # KO  (mauvais port, droppé)
 ```
 
 ## 📋 Étape 5 — Quarantaine dynamique via API
@@ -252,6 +321,10 @@ class QuarantineAPI(ControllerBase):
         return Response(status=200)
 ```
 
+> Ce snippet est volontairement réduit à l'essentiel : dans une vraie app Ryu il faut récupérer `parser`/`ofp` via `dp.ofproto_parser`/`dp.ofproto`, injecter `dpset` et `WSGIApplication` dans `_CONTEXTS`, et importer `Response` depuis `ryu.app.wsgi`. L'objectif ici est de montrer le **flot**, pas un fichier copiable tel quel.
+
+L'API REST sur le contrôleur est le point d'intégration avec les outils SecOps (SIEM, SOAR). La priorité 200 est délibérément élevée — elle doit surpasser toutes les règles de forwarding normales (priorité max 100 dans notre exemple) pour garantir que la quarantaine s'applique même si des règles permissives existent pour cet host. La boucle sur `self.dpset.dps.values()` pousse la règle de quarantaine sur **tous les switches** du domaine OpenFlow — l'isolation est fabric-wide, pas juste sur le switch local. Note : une quarantaine robuste matche aussi sur `eth_src` (adresse MAC) en plus de `ipv4_src`, car un host compromis peut changer son IP mais difficilement sa MAC sans être détecté.
+
 ```bash
 # Simule un SIEM qui détecte une compromission sur h1 (10.0.0.1)
 curl -X POST http://localhost:8080/quarantine/10.0.0.1
@@ -264,16 +337,20 @@ mininet> h1 ping 10.0.0.2
 ## 📋 Étape 6 — Inspecter une flow table
 
 ```bash
-sudo ovs-ofctl -O OpenFlow13 dump-flows s1 --pretty
+sudo ovs-ofctl -O OpenFlow13 dump-flows s1
 # cookie=0x0, duration=12.345s, table=0, n_packets=42, n_bytes=3528,
 #   priority=200,ip,nw_src=10.0.0.1 actions=drop
 
-# Stats par port
-sudo ovs-ofctl dump-ports s1
+# Statistiques par port (compteurs Rx/Tx, erreurs, drops)
+sudo ovs-ofctl -O OpenFlow13 dump-ports s1
 
-# Voir le pipeline OpenFlow
-sudo ovs-ofctl -O OpenFlow13 dump-flows s1 | sort -k3
+# Trier les flows par ordre de priorité (3e champ de l'affichage)
+sudo ovs-ofctl -O OpenFlow13 dump-flows s1 | sort -t= -k4 -rn
 ```
+
+> 💡 `ovs-ofctl dump-flows` n'a pas d'option `--pretty` ; c'est la sortie verbeuse par défaut. Pour une vue côté base de données OVSDB (et non OpenFlow), utilisez `ovs-vsctl list bridge s1`. Pensez à toujours passer `-O OpenFlow13` : sans ce flag, `ovs-ofctl` parle OpenFlow 1.0 et n'affichera pas (ou mal) les flows installés en 1.3.
+
+Les champs `n_packets` et `n_bytes` sont les compteurs de métrologie OpenFlow intégrés au switch. Ils permettent de mesurer le débit par rule, d'identifier les règles jamais matchées (`n_packets=0` sur une règle censée capturer du trafic → bug de match), et de calculer des statistiques de sécurité (combien de paquets ont été droppés par la quarantaine). Ces compteurs sont queryables en temps réel sans impact sur les performances du forwarding.
 
 ## 🧠 Pitfalls
 

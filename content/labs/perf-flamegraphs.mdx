@@ -2,8 +2,8 @@
 title: "Linux perf et flame graphs : trouver le hot path"
 slug: perf-flamegraphs
 objective: "Comprendre le profiling sampling, capturer un profil avec perf, générer un flame graph SVG interactif et identifier la fonction qui mange ton CPU."
-tag: Infrastructure
-theme: violet
+tag: Systèmes
+theme: magenta
 difficulty: intermédiaire
 duration: "45 min"
 prerequisites:
@@ -56,57 +56,72 @@ quiz:
     explanation: "Symptômes : plat + 'unknown' / '[unknown]' / '0x????'. Cause: pas de symbols ou unwinding cassé. Fix : installer `-dbgsym`/`-dbg` packages, recompiler -g, utiliser --call-graph dwarf. Pour container : monter le repo avec symbols dans le container de profiling."
 ---
 
-## 🧠 Théorie : sampling profiler en 1 schéma
+## 🧠 Théorie : sampling, stacks, et flame graphs
 
-```
-   Pendant que ton app tourne :
-   
-   Time ───────────────────────────────────────────►
-   
-    │ samp │  samp │  samp │  samp │  samp │  samp │
-    ▼      ▼       ▼       ▼       ▼       ▼       ▼
-   ┌─────┐┌─────┐ ┌─────┐ ┌─────┐ ┌─────┐ ┌─────┐
-   │stack││stack│ │stack│ │stack│ │stack│ │stack│
-   │main │ main │ main │ main │ main │ main 
-   │ srv │  srv │  srv │  srv │  srv │  srv
-   │ pars│  pars│  comp│  comp│  comp│  comp
-   │ regx│  regx│  hash│      │      │  hash
-   └─────┘└─────┘ └─────┘ └─────┘ └─────┘ └─────┘
-   
-   Agrégation :
-   - main → srv → pars → regx  : 33% (2/6)
-   - main → srv → comp → hash  : 33%
-   - main → srv → comp         : 17%
-   - main → srv → comp → ...   : 17%
-   
-   Conclusion : regx ET hash chacun 33% du CPU.
-   Avec 99 Hz et 60s tu as ~6000 samples → statistique fiable.
-```
+### Le problème que résout le profiling
+
+Une application CPU-bound dépense son temps dans un petit sous-ensemble de fonctions. Sans profiler, identifier ces "hot paths" nécessite une intuition difficile à acquérir. Un profiler répond à la question : **où va le temps CPU ?** avec une précision statistique.
+
+Il existe deux familles de profilers :
+
+**Sampling** (perf, gperftools, async-profiler, py-spy) : un timer signale le process à intervalles réguliers (ex: 99 Hz), et à chaque signal on prend une photo de la call stack courante. Après N échantillons, les fonctions les plus représentées sont les hot spots. L'overhead est faible (le process n'est interrompu qu'à 99 Hz) et le biais est minimal — le profiler ne modifie pas le code mesuré.
+
+**Instrumentation** (callgrind, gprof) : des hooks sont insérés à chaque entrée et sortie de fonction. On mesure le nombre exact d'appels et le temps passé. L'overhead est élevé (10-100x) — utiliser uniquement en développement, jamais en prod.
+
+### Comment perf capture les stacks
+
+`perf` utilise les **perf events** du kernel — une interface qui permet d'enregistrer des événements CPU avec très peu d'overhead. Quand tu lances `perf record -F 99 -g`, le kernel configure un timer hardware qui interrompt le CPU 99 fois par seconde et capture l'état du registre instruction pointer. Avec `-g`, il déroule également la call stack depuis le frame pointer (RBP) ou via DWARF unwind tables.
+
+<Mermaid chart={`
+sequenceDiagram
+    participant App as Application
+    participant Timer as Kernel timer (99 Hz)
+    participant Perf as perf subsystem
+    participant File as perf.data
+
+    loop Toutes les ~10ms
+        Timer->>App: Interrupt CPU
+        App-->>Perf: IP courant + stack
+        Perf->>Perf: Unwind stack (RBP / DWARF)
+        Perf->>File: Écrit sample (stack+contexte)
+    end
+    Note over File: Agrégation offline avec perf script
+`} caption="Capture sampling par perf : un timer kernel interrompt l'app et enregistre la stack courante" />
+
+### Stack unwinding : frame pointer vs DWARF
+
+Deux mécanismes permettent de reconstituer la call stack depuis un sample :
+
+**Frame pointer** (`-fno-omit-frame-pointer`) : le registre RBP (base pointer x86_64) pointe vers le stack frame courant, qui contient l'adresse du frame précédent. En suivant cette chaîne, on remonte toute la stack en O(n). C'est rapide et fiable.
+
+Le compilateur GCC/Clang avec `-O2` omet RBP par défaut pour libérer un registre général supplémentaire — gain de performance de 1-3%, mais impossibilité de faire du stack unwinding rapide.
+
+**DWARF** (`--call-graph dwarf`) : tables d'information de debug (`.debug_frame` / `.eh_frame`) qui décrivent comment reconstruire la stack depuis n'importe quel point du code, même sans frame pointer. Plus robuste, mais perf doit copier une portion de la pile (8 Ko par défaut) à chaque sample puis l'unwinder offline — coûteux en CPU et en taille de `perf.data`, et la pile copiée peut être tronquée sur les stacks profondes.
+
+**LBR** (`--call-graph lbr`) : *Last Branch Record*, un buffer matériel Intel qui enregistre les derniers sauts pris par le CPU. perf reconstruit la stack sans frame pointer ni DWARF, avec un overhead quasi nul — mais limité en profondeur (8 à 32 frames selon le CPU) et réservé aux events matériels. Idéal quand on ne peut ni recompiler ni installer les symboles de debug.
+
+> 💡 Depuis 2024, l'écosystème (Fedora 38+, Ubuntu 24.04, Python) réactive `-fno-omit-frame-pointer` par défaut, précisément pour rendre le profiling par frame pointer à nouveau fiable et bon marché. C'est le mode à privilégier quand il est disponible.
+
+### L'algorithme du flame graph
+
+Un flame graph est une représentation agrégée et triée de toutes les stacks capturées. L'algorithme en trois étapes :
+
+1. **Folding** : chaque stack est représentée comme une chaîne de fonctions séparées par des `;` (`main;srv;parse;regex`)
+2. **Counting** : les stacks identiques sont comptées ensemble
+3. **Rendering** : les stacks sont triées, emboîtées, et chaque rectangle a une largeur proportionnelle à son compte
+
+<Stack layers={[
+  { label: 'main → srv → comp → hash (33% des samples)', accent: 'v' },
+  { label: 'main → srv → parse → regex (33% des samples)', accent: 'c' },
+  { label: 'main → srv → comp (17% des samples)', accent: 's' },
+  { label: 'main → srv → io → read (17% des samples)', accent: 'dim' },
+]} bottom="first" caption="Exemple d'agrégation de stacks — la largeur de chaque bloc dans le flame graph est proportionnelle au % de samples" />
+
+Un bloc **large** vers le haut de la pile indique un hot spot à optimiser. Un bloc **étroit** mais très haut indique une fonction appelée rarement mais profondément dans une chaîne d'appels.
 
 ### Pourquoi 99 Hz et pas 100 ?
 
-99 (premier > 100, et impair) évite l'aliasing avec les timers à 100/1000 Hz du kernel et de certains drivers. Tu mesures vraiment ton app, pas un battement périodique.
-
-### Qu'est-ce qu'un flame graph ?
-
-```
-   ┌─────────────────────────────────────────────────┐  ← Y = profondeur stack
-   │              srv (60%)                          │
-   ├──────────────────┬──────────────────────────────┤
-   │  pars (30%)      │  comp (30%)                  │
-   ├─────────┬────────┼──────────┬───────────────────┤
-   │ regx 15%│ json15%│ hash 20% │   marshal 10%     │
-   ├─────────┼────────┼──────────┼───────────────────┤
-   │ malloc 5│        │ siphash13│                   │
-   └─────────────────────────────────────────────────┘  ← largeur = % CPU
-   
-   X = stacks groupées (PAS le temps !)
-   Tout en bas : main / entry point
-   Tout en haut : fonctions leaf
-   Largeur = % du CPU passé là (cumul)
-```
-
-→ pour trouver l'optimisation rentable : cherche le **plus large bloc** vers le haut.
+99 Hz évite l'aliasing avec les timers périodiques kernel et drivers qui tournent souvent à 100 Hz ou 1000 Hz (HZ=100, HZ=250, HZ=1000 selon la config). Si `perf` échantillonnait exactement à 100 Hz, il pourrait tomber systématiquement entre deux appels kernel périodiques et rater certaines stacks. Un nombre premier légèrement différent évite ce phénomène.
 
 ## 🎯 Objectif
 
@@ -127,6 +142,8 @@ git clone https://github.com/brendangregg/FlameGraph.git ~/FlameGraph
 
 perf --version
 ```
+
+`linux-tools-$(uname -r)` installe la version de `perf` compilée exactement pour ton kernel — les versions doivent correspondre sinon certaines fonctionnalités ne fonctionnent pas. `FlameGraph` est le repo de Brendan Gregg contenant les scripts Perl `stackcollapse-perf.pl` (convertit la sortie de `perf script` en format folded) et `flamegraph.pl` (génère le SVG).
 
 > ⚠️ Sur un kernel custom ou conteneur, tu n'auras peut-être pas la version perf qui match. Adapte `apt install linux-tools-$(uname -r)` selon ta distrib.
 
@@ -153,11 +170,15 @@ int main() {
 }
 ```
 
+`fnv1a` est une fonction de hash non-cryptographique (FNV-1a). Sa boucle interne itère sur chaque caractère de la chaîne et applique deux opérations bit-à-bit (`^=` et `*=`). Dans ce benchmark, elle est appelée 50 millions de fois avec la même chaîne — une inefficacité évidente que le flame graph va révéler immédiatement.
+
 ```bash
 gcc -O2 -fno-omit-frame-pointer -g hashloop.c -o hashloop
 time ./hashloop
 # real 4.5s  user 4.5s  sys 0s
 ```
+
+`-O2` active les optimisations de production (inlining, vectorisation, etc.). `-fno-omit-frame-pointer` préserve RBP pour le stack unwinding. `-g` génère les informations DWARF de debug — nécessaires pour que `perf report` affiche les noms de fonctions plutôt que des adresses hexadécimales.
 
 ## 📋 Étape 3 — Capturer un profil
 
@@ -168,6 +189,17 @@ sudo perf record -F 99 -g -- ./hashloop
 # Affichage texte
 sudo perf report --stdio | head -30
 ```
+
+`kernel.perf_event_paranoid` contrôle ce qu'un utilisateur non-root peut mesurer. Les niveaux vont du plus permissif au plus strict :
+- `-1` : aucune restriction (accès à tous les events, y compris kernel + raw tracepoints).
+- `0` : interdit l'accès aux données raw des tracepoints, mais autorise le profiling CPU et kernel.
+- `1` : interdit en plus le profiling kernel (`-a` global, events kernel) ; le profiling userspace par CPU reste possible.
+- `2` (**défaut sur la plupart des distros récentes**) : interdit en plus le profiling CPU userspace ; en pratique il ne reste que peu de chose sans privilèges.
+- `3` (Debian/Ubuntu durcis) : tout est interdit aux non-root.
+
+En lab on baisse temporairement la valeur. Lancer perf via `sudo` contourne de toute façon ces restrictions ; le réglage n'est utile que pour profiler **sans** root.
+
+`perf record -F 99` collecte des samples à 99 Hz. `-g` active le call graph recording. `--` sépare les options de perf du programme à profiler. Le résultat est écrit dans `perf.data` dans le répertoire courant.
 
 → tu vois en tête les fonctions qui consomment le + (overhead column).
 
@@ -182,10 +214,12 @@ sudo perf script > out.stacks
 xdg-open flamegraph.svg
 ```
 
+`perf script` décode `perf.data` et produit une sortie texte avec une ligne par sample, incluant la call stack complète. `stackcollapse-perf.pl` transforme ce format en "folded stacks" : `fonction1;fonction2;fonction3 count`. `flamegraph.pl` prend ces stacks foldées et génère un SVG interactif.
+
 Tu vois un SVG **interactif** :
-- clic sur une fonction → zoom
-- Ctrl-F → recherche
-- couleurs aléatoires (sans signification)
+- clic sur une fonction → zoom sur cette sous-stack
+- Ctrl-F → recherche par nom de fonction (surligné en violet)
+- couleurs aléatoires (sans signification — c'est uniquement pour la lisibilité)
 
 Pour notre `hashloop` : `fnv1a` prend ~95% du temps, c'est le hot path.
 
@@ -207,12 +241,27 @@ gcc -O2 -fno-omit-frame-pointer -g hashloop2.c -o hashloop2
 time ./hashloop2     # → 0.001s
 ```
 
-Bon, c'était évident sur ce cas trivial. En réel :
-1. Profile → flame graph
-2. Identifie la fonction la + large
-3. Vérifie : appelée trop souvent ? Algorithme inefficient ? Bug N² ?
-4. Patch
-5. Re-profile pour confirmer
+Pour comparer objectivement deux profils (avant/après), génère le folded des deux versions puis utilise `difffolded.pl` — il produit un flame graph **différentiel** : rouge = régression (plus chaud après), bleu = amélioration.
+
+```bash
+# Capturer aussi la version optimisée en folded
+sudo perf record -F 99 -g -o perf2.data -- ./hashloop2
+sudo perf script -i perf2.data | ~/FlameGraph/stackcollapse-perf.pl > opt.folded
+
+# Diff : 1er = baseline, 2e = nouveau
+~/FlameGraph/difffolded.pl out.folded opt.folded \
+  | ~/FlameGraph/flamegraph.pl > diff.svg
+```
+
+Bon, c'était évident sur ce cas trivial. En réel, la méthodologie est identique mais l'optimisation moins évidente :
+
+<Pipeline steps={[
+  { label: 'Profile\nperf record -F 99 -g', accent: 'v' },
+  { label: 'Visualise\nflame graph SVG', accent: 'c' },
+  { label: 'Identifie\nbloc le plus large / le plus haut', accent: 's' },
+  { label: 'Patch\nAlgo · Memoization · Structure de données', accent: 'v' },
+  { label: 'Re-profile\ncompare avec difffolded.pl', accent: 'c' },
+]} caption="La boucle d'optimisation guidée par le flame graph — toujours mesurer avant et après" />
 
 ## 📋 Étape 6 — Profiler une app déjà en cours
 
@@ -223,11 +272,15 @@ sudo perf record -F 99 -g -p $(pgrep -f myservice) -- sleep 30
 # 30s de capture, puis stop
 ```
 
+`-p $(pgrep -f myservice)` attache perf à un process existant par son PID. `-- sleep 30` arrête la capture après 30 secondes. Le process n'est pas interrompu — seul perf est en train d'écouter les événements.
+
 Ou tout le système (utile sur app très threadée) :
 
 ```bash
 sudo perf record -F 99 -ag -- sleep 30
 ```
+
+`-a` capture tous les CPUs, tous les processes — utile pour les applications multi-processus ou pour comprendre la charge globale du système.
 
 ## 📋 Étape 7 — Profiling Python / Node / Java
 
@@ -240,12 +293,17 @@ sudo py-spy record -o profile.svg --pid $(pgrep -f myapp.py)
 # → profile.svg en flame graph directement
 ```
 
+`py-spy` utilise `process_vm_readv()` pour lire la stack Python depuis l'extérieur, sans modifier l'interpréteur. Il comprend les frames Python (bytecode) et les extensions C — le flame graph montre les deux couches.
+
 ### Node.js
 
 ```bash
-node --perf-basic-prof myapp.js   # active le mapfile JIT pour perf
-# puis perf record/script normal
+# Active le mapfile JIT + frames interpréteur dans la stack native
+node --perf-basic-prof --interpreted-frames-native-stack myapp.js
+# puis perf record -F 99 -g -p <pid> -- sleep 30, puis script + flamegraph
 ```
+
+`--perf-basic-prof` génère un fichier `/tmp/perf-<pid>.map` que `perf script` lit pour résoudre les adresses du code JIT (V8 TurboFan) en noms de fonctions JavaScript. Sans ce fichier, toute la stack JS apparaît sous `[unknown]`. `--interpreted-frames-native-stack` ajoute les frames du code **interprété** (Ignition), souvent absentes sinon. Comme V8 réécrit le code à chaud, le mapfile peut contenir des entrées périmées : profile en steady-state après warmup.
 
 ### Java
 
@@ -254,7 +312,7 @@ node --perf-basic-prof myapp.js   # active le mapfile JIT pour perf
 ./profiler.sh -d 30 -f profile.html $(pgrep -f java)
 ```
 
-Toutes ces stacks (mixed kernel/userspace) sont aussi visualisables en flame graph.
+`async-profiler` combine des signal handlers Java, `AsyncGetCallTrace` JVMTI, et des perf events kernel pour obtenir des stacks mixtes Java + JVM + kernel — sans les limitations de safepoint que `jstack` impose.
 
 ## 📋 Étape 8 — Cas avancés
 
@@ -264,15 +322,27 @@ Toutes ces stacks (mixed kernel/userspace) sont aussi visualisables en flame gra
 sudo perf record -e cache-misses -g -- ./app
 ```
 
-→ flame graph des fonctions qui causent le + de cache miss. Utile pour optimiser la localité mémoire.
+`-e cache-misses` change l'événement samplé des cycles CPU aux L1/L2 cache misses (compteurs hardware PMU). Le flame graph résultant montre les fonctions qui causent le plus de cache miss — utile pour optimiser la **localité mémoire** (accès consécutifs vs aléatoires dans un tableau).
 
 ### Profiler les off-CPU (temps bloqué)
 
 ```bash
+# Capture les events scheduler avec stack au moment du blocage
 sudo perf record -e sched:sched_switch -g -- ./app
 ```
 
-→ tu vois où ton app passe son temps **endormie** (I/O, lock, mutex). Indispensable pour les apps réseau-bound.
+`sched:sched_switch` est le tracepoint qui se déclenche quand le scheduler kernel bascule d'un process à un autre. En capturant les stacks au moment où le process **s'endort** (plutôt que quand il tourne), on voit où l'app passe son temps à attendre : I/O, locks, mutex, futex.
+
+Attention : un flame graph on-CPU classique (par sampling) ne montre **jamais** le temps off-CPU, par construction — un process endormi ne consomme pas de cycles, donc n'apparaît pas. C'est le grand angle mort du profiling CPU, et la raison d'être des off-CPU flame graphs. La méthode `perf` ci-dessus est lourde (un event par switch) ; en pratique on préfère eBPF (`offcputime-bpfcc` du projet BCC) qui agrège directement en kernel la durée de sommeil par stack, avec un overhead bien moindre :
+
+```bash
+# Bien plus efficace : agrégation off-CPU en kernel via eBPF
+sudo offcputime-bpfcc -df 30 > out.offcpu.folded
+~/FlameGraph/flamegraph.pl --color=io --title="Off-CPU" \
+  out.offcpu.folded > offcpu.svg
+```
+
+`-df` produit directement le format folded (`-f`) avec délimiteur (`-d`) séparant stacks kernel et userspace. Le résultat se branche directement sur `flamegraph.pl`.
 
 ### Heat map de latence
 
@@ -280,7 +350,7 @@ sudo perf record -e sched:sched_switch -g -- ./app
 ~/FlameGraph/HeatMap/HeatMap.pl < perf-out.txt > heatmap.svg
 ```
 
-→ matrice latence × temps. Détecte les "queue de distribution" (tail latency).
+→ matrice latence × temps. Détecte les "queue de distribution" (tail latency) — indispensable pour les applications à latence p99/p999 critique.
 
 ## 🧠 Pitfalls
 
@@ -305,8 +375,10 @@ sudo perf report --stdio --no-children | head -10
 # 3. Flame graph généré
 ls flamegraph.svg
 
-# 4. Vérifie le contenu : on doit voir fnv1a > 90% en largeur
-grep -o 'fnv1a' flamegraph.svg | wc -l > 0
+# 4. Vérifie le contenu : fnv1a doit apparaître dans le SVG (et dominer en largeur)
+grep -c 'fnv1a' flamegraph.svg    # > 0 attendu
+# Sur le folded, mesurer son poids relatif :
+grep fnv1a out.folded | awk '{s+=$NF} END {print s" samples sur fnv1a"}'
 ```
 
 ## 🚀 Pour aller plus loin

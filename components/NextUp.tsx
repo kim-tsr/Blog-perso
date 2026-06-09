@@ -1,6 +1,6 @@
 import Link from 'next/link'
 import type { LabMeta } from '@/lib/labs'
-import { getThemeClasses } from '@/lib/theme'
+import { getThemeClasses, themeColorVar } from '@/lib/theme'
 
 const DIFF_LETTER: Record<string, string> = {
   'débutant': 'D', 'intermédiaire': 'I', 'avancé': 'A',
@@ -56,7 +56,7 @@ export default function NextUp({ labs, currentSeries }: Props) {
       <div className="nu-grid">
         {labs.map(lab => {
           const { tc } = getThemeClasses(lab.theme)
-          const col = tc === 'tv' ? 'var(--v)' : tc === 'tc' ? 'var(--c)' : 'var(--a)'
+          const col = themeColorVar(tc)
           const continuesSeries = lab.series && currentSeries && lab.series === currentSeries
           return (
             <Link key={lab.slug} href={`/labs/${lab.slug}`} className="nu-card" style={{ '--nu-c': col } as React.CSSProperties}>

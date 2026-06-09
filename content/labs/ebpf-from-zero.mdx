@@ -2,8 +2,8 @@
 title: "eBPF from zero : tracer le kernel sans le toucher"
 slug: ebpf-from-zero
 objective: "Comprendre ce qu'est eBPF, écrire un premier programme avec bpftrace, tracer des syscalls et événements TCP, et savoir quand l'utiliser au lieu d'un agent userspace."
-tag: Infrastructure
-theme: violet
+tag: Systèmes
+theme: magenta
 difficulty: intermédiaire
 duration: "55 min"
 minRole: pro
@@ -57,32 +57,42 @@ quiz:
     explanation: "eBPF est petit, rapide, attaché à un hook. Bon pour : drop packet par IP, compter syscalls, observer latence. Mauvais pour : parser HTTP/2 complet, agréger sur 24h avec ML, calculs lourds. Pattern courant : eBPF observe + envoie au userspace via perf ring buffer, userspace fait le métier."
 ---
 
-## 🧠 Théorie : eBPF en 90 secondes
+## 🧠 Théorie : eBPF en profondeur
 
-```
-   AVANT eBPF                          APRÈS eBPF
-   ─────────                           ─────────
-   
-   Besoin d'instrumenter le réseau ?   Tu écris un programme BPF.
-                                       
-   → Patch le kernel + recompile        Le kernel le compile JIT,
-   → OU écrire un module kernel         le vérifie, l'attache à un hook.
-   → OU agent userspace lent            Tourne dans le kernel,
-     (copies de paquets)                à vitesse kernel.
-   
-   Cycle: jours/semaines              Cycle: secondes
-   Risque: crash kernel               Risque: refusé par verifier
-   Distribué: difficile               Distribué: 1 binaire
-```
+eBPF (extended Berkeley Packet Filter) est une architecture qui permet d'exécuter des programmes sandboxés **dans le kernel Linux** sans modifier le code source kernel, sans écrire un module kernel, et sans risquer un crash système.
 
-### Architecture
+Historiquement, étendre le kernel exigeait soit de patcher les sources et recompiler (cycle en semaines, risque de stabilité), soit d'écrire un module `.ko` (risque de crash total si bug, difficile à distribuer). eBPF résout ce problème avec une approche radicalement différente : un **vérificateur statique** prouve la sûreté du programme avant son exécution, un **compilateur JIT** le transforme en code natif, et une série de **hooks** permettent de l'attacher à n'importe quel point d'intérêt du kernel.
+
+La différence avec les modules kernel est fondamentale : un module buggué crashe le système. Un programme BPF buggué est **refusé par le vérificateur** avant même d'entrer dans le kernel. C'est cette garantie qui a rendu eBPF acceptable pour la production — Cloudflare, Meta, Netflix, Google l'utilisent en prod sur des millions de serveurs.
+
+### Le vérificateur : garant de la sûreté
+
+Le vérificateur eBPF est un analyseur statique qui s'exécute au moment du chargement (`bpf()` syscall). Il prouve formellement plusieurs propriétés :
+
+- **Terminaison** : pas de boucle infinie. Le vérificateur explore tous les chemins d'exécution possibles, et le nombre total d'instructions analysées est borné (1 million par défaut, voir `/proc/sys/kernel/bpf_*`). Depuis le kernel 5.3, les boucles bornées (`bpf_loop`, boucles avec compteur prouvable) sont autorisées — avant, il fallait dérouler manuellement (`#pragma unroll`).
+- **Sûreté mémoire** : on ne peut pas déréférencer un pointeur kernel directement. Il faut passer par les helpers `bpf_probe_read_kernel()` / `bpf_probe_read_user()` (anciennement `bpf_probe_read()`), qui copient les données dans la pile BPF de façon sûre et gèrent les fautes de page. Chaque accès à une map est validé contre les bornes déclarées.
+- **Type safety** : avec BTF (BPF Type Format) et CO-RE (Compile Once Run Everywhere), les offsets des champs de structures kernel sont relocalisés au chargement selon le kernel cible — le programme reste portable d'une version à l'autre.
+- **Pas de fuite** : les pointeurs kernel ne peuvent pas être transmis à l'userspace (via une map ou un printf), pour éviter les fuites d'adresses qui faciliteraient un exploit (contournement de KASLR).
+
+Si l'une de ces propriétés ne peut être prouvée, le chargement est **rejeté** avec une erreur explicite. C'est contraignant à programmer, mais c'est ce qui garantit la stabilité.
+
+<Pipeline steps={[
+  { label: 'Code source BPF\n(C / bpftrace)', accent: 'v' },
+  { label: 'Compile\nclang → BPF bytecode', accent: 'c' },
+  { label: 'Vérificateur kernel\nTerminaison · mémoire · types', accent: 's' },
+  { label: 'JIT Compiler\nBytecode → x86_64 natif', accent: 'v' },
+  { label: 'Attach au hook\nkprobe · tracepoint · XDP · LSM', accent: 'c' },
+  { label: 'Exécution kernel-side\nMaps · Ring buffers → userspace', accent: 's' },
+]} caption="Cycle de vie d'un programme eBPF : du code source à l'exécution kernel, via le vérificateur" />
+
+### Architecture kernel ↔ userspace
 
 ```
    ┌──────────────────────────────────────────┐
    │           PROGRAMME eBPF                  │
    │   (BPF bytecode, compilé via clang/llvm)  │
    └────────────────┬─────────────────────────┘
-                    │ load via libbpf
+                    │ load via libbpf (bpf() syscall)
                     ▼
    ┌──────────────────────────────────────────┐
    │           VERIFIER (kernel)               │
@@ -104,20 +114,28 @@ quiz:
    └──────────────────────────────────────────┘
 ```
 
+<Stack layers={[
+  { label: 'Application userspace (bpftrace / libbpf tool)', accent: 'v' },
+  { label: 'BPF Maps — partagées kernel ↔ userspace', hint: 'hash · array · ringbuf · per-cpu', accent: 'c' },
+  { label: 'Programme BPF — exécuté dans le kernel', hint: 'Vérificateur prouve la sûreté · JIT compile', accent: 's' },
+  { label: 'Hook kernel (kprobe · tracepoint · XDP · LSM)', hint: 'Déclenche le programme BPF sur chaque event', accent: 'dim' },
+]} bottom="last" caption="Modèle mémoire eBPF : les maps sont le canal de communication entre le programme kernel-side et l'userspace" />
+
 ### Catégories de hooks
 
 | Hook | Quand | Cas d'usage |
 |---|---|---|
-| **kprobe / kretprobe** | Avant/après une fonction kernel | Tracing dynamique |
-| **tracepoint** | Points marqués par les devs kernel | Tracing stable |
-| **uprobe / USDT** | Fonction userspace | Profile postgres, jvm |
-| **XDP** | Très tôt dans la pile réseau (NIC driver) | Drop DDoS, load balance |
+| **kprobe / kretprobe** | Avant/après une fonction kernel | Tracing dynamique de fonctions internes |
+| **fentry / fexit** | Avant/après une fonction kernel (BTF) | Successeur moderne du kprobe (kernel ≥ 5.5) : args typés, overhead moindre |
+| **tracepoint** | Points marqués par les devs kernel | Tracing stable entre versions kernel |
+| **uprobe / USDT** | Fonction userspace | Profile postgres, jvm, ruby, node |
+| **XDP** | Très tôt dans la pile réseau (NIC driver) | Drop DDoS, load balance L4 |
 | **TC** | Traffic control (qdisc) | Filtrage, rewrite paquet |
-| **socket filter** | À l'entrée socket | tcpdump, Cilium policies |
-| **cgroup** | Sur cgroup (skb, sock_create...) | Per-pod policies |
-| **LSM** | Hook Linux Security Module | Politique d'accès dynamique |
-| **perf event** | Sample CPU, cache miss | Profiling |
-| **sched** | Events scheduler (sched_switch) | Latency tracing |
+| **socket filter** | À l'entrée socket | tcpdump, Cilium network policies |
+| **cgroup** | Sur cgroup (skb, sock_create...) | Per-pod policies (k8s) |
+| **LSM** | Hook Linux Security Module | Politique d'accès dynamique (Tetragon) |
+| **perf event** | Sample CPU, cache miss | Profiling CPU-bound |
+| **sched** | Events scheduler (sched_switch) | Latency tracing entre processes |
 
 ## 🎯 Objectif
 
@@ -138,6 +156,8 @@ bpftrace -l 'tracepoint:syscalls:sys_enter_*' | head
 # → tu vois la liste des tracepoints syscalls disponibles
 ```
 
+`linux-headers-$(uname -r)` installe les en-têtes kernel nécessaires à la compilation des programmes BPF. `bpftrace -l` liste tous les points d'instrumentation disponibles — il en existe plusieurs milliers sur un kernel récent.
+
 ## 📋 Étape 2 — Hello world
 
 ```bash
@@ -146,9 +166,9 @@ sudo bpftrace -e 'tracepoint:syscalls:sys_enter_openat
                   { printf("%s -> %s\n", comm, str(args->filename)); }'
 ```
 
-→ flux en direct des fichiers ouverts par tous les processes. C'est `opensnoop` en 1 ligne.
+`tracepoint:syscalls:sys_enter_openat` est le point d'instrumentation stable pour l'entrée du syscall `openat`. `comm` est une variable built-in bpftrace contenant le nom du process courant. `args->filename` accède au premier argument du tracepoint — le chemin du fichier à ouvrir. `str()` convertit le pointeur kernel en string copiée en mémoire BPF sûre.
 
-`Ctrl+C` pour arrêter.
+→ flux en direct des fichiers ouverts par tous les processes. C'est `opensnoop` en 1 ligne.
 
 ## 📋 Étape 3 — 5 one-liners utiles
 
@@ -159,6 +179,8 @@ sudo bpftrace -e 'tracepoint:raw_syscalls:sys_enter
                   { @[comm] = count(); }
                   interval:s:10 { exit(); }'
 ```
+
+`tracepoint:raw_syscalls:sys_enter` est le tracepoint qui se déclenche sur **tout** syscall, quel qu'il soit. `@[comm] = count()` incrémente un compteur dans une map hash, indexée par le nom du process. `interval:s:10` déclenche une action toutes les 10 secondes — ici `exit()` qui affiche les maps et termine. Après 10 secondes, tu vois un classement des processes par volume de syscalls.
 
 → après 10 secondes, top des commandes par nombre de syscalls. Utile pour repérer un process baveux.
 
@@ -172,7 +194,9 @@ kretprobe:vfs_read /@start[tid]/
 '
 ```
 
-→ histogramme des durées de `vfs_read` en microsecondes. Tu vois la queue de latence.
+`kprobe:vfs_read` se déclenche à l'entrée de la fonction `vfs_read()`. `@start[tid] = nsecs` stocke le timestamp nanoseconde dans une map hash indexée par le TID (thread ID, et non le PID : c'est le thread qui exécute le read, et l'indexation par `tid` évite les collisions entre threads d'un même process). `kretprobe:vfs_read` se déclenche au retour de la fonction. Le prédicat `/@start[tid]/` n'exécute l'action que si la clé existe — il filtre les retours dont on a raté l'entrée (sondes posées en cours de read), qui produiraient une durée absurde car `@start[tid]` vaudrait 0. `hist()` construit un histogramme à intervalles en puissances de 2 (log2). `delete(@start[tid])` libère la clé après usage, sinon la map `@start` grossit indéfiniment.
+
+→ histogramme des durées de `vfs_read` en microsecondes : tu lis directement la distribution et la queue de latence (tail). Les premières lectures déjà en cours au démarrage de la sonde sont ignorées — c'est normal.
 
 ### 3. Connexions TCP outbound
 
@@ -181,10 +205,14 @@ sudo bpftrace -e '
 kprobe:tcp_connect {
   $sk = (struct sock *)arg0;
   $dst = ntop($sk->__sk_common.skc_daddr);
-  $port = ($sk->__sk_common.skc_dport >> 8) | ($sk->__sk_common.skc_dport << 8) & 0xffff;
+  $port = bswap($sk->__sk_common.skc_dport);
   printf("%s -> %s:%d\n", comm, $dst, $port);
 }'
 ```
+
+`arg0` de `tcp_connect` est le pointeur `struct sock *` — la structure kernel représentant une connexion socket. Le cast `(struct sock *)arg0` permet d'accéder aux champs (bpftrace lit le champ via CO-RE, l'offset est résolu au chargement). `skc_daddr` est l'adresse IPv4 destination, stockée en ordre réseau (big-endian). `skc_dport` est le port destination, lui aussi en big-endian sur 16 bits : `bswap()` (built-in bpftrace) inverse l'ordre des octets pour obtenir un entier lisible en host order — c'est plus sûr que de coder le swap à la main, où la précédence des opérateurs `>>`/`<<`/`&` est piégeuse. `ntop()` convertit l'adresse en string IPv4/IPv6.
+
+> 💡 `tcp_connect` ne couvre que les connexions sortantes (côté client). Pour les connexions acceptées (serveur), trace plutôt `kretprobe:inet_csk_accept`.
 
 → équivalent `tcpconnect` du BCC project. Idéal pour repérer une connexion C2 surprise.
 
@@ -193,31 +221,48 @@ kprobe:tcp_connect {
 ```bash
 sudo bpftrace -e 'tracepoint:syscalls:sys_enter_openat
                   { @[str(args->filename)] = count(); }
-                  interval:s:30 { exit(); print(@, 10); clear(@); }'
+                  interval:s:30 { print(@, 10); clear(@); }'
 ```
+
+`@[str(args->filename)] = count()` indexe la map par chemin de fichier et incrémente. `print(@, 10)` affiche les 10 entrées les plus fréquentes (le `print` d'une map agrégée la trie par valeur décroissante). `clear(@)` remet ensuite tous les compteurs à zéro, pour redémarrer une fenêtre de 30 s propre. On n'appelle volontairement pas `exit()` ici : le `interval` se rejoue indéfiniment, donnant un top glissant. Ctrl+C pour arrêter.
+
+> 💡 Sans `clear(@)`, la map ne fait que grossir : le verifier impose une taille max (`map_size`), et au-delà les nouvelles clés sont silencieusement perdues (`@` plein). Penser à `clear` ou à utiliser une `lru_hash`.
 
 ### 5. Process tués par OOM
 
 ```bash
 sudo bpftrace -e 'kprobe:oom_kill_process
-                  { printf("OOM kill: %s (pid=%d)\n", comm, pid); }'
+                  { $oc = (struct oom_control *)arg0;
+                    printf("OOM kill: %s (pid=%d)\n",
+                           $oc->chosen->comm, $oc->chosen->pid); }'
 ```
+
+`oom_kill_process` est la fonction kernel appelée quand le OOM killer décide de tuer un process. Attention au contexte : `comm` et `pid` (built-ins) désignent la tâche **courante** qui a déclenché l'allocation, pas forcément la victime. Pour identifier la cible réellement tuée, on lit `arg0` (un `struct oom_control *`) et son champ `chosen` (le `task_struct` de la victime sélectionnée). Attacher un kprobe ici permet d'être averti immédiatement — avant même que le log n'apparaisse dans `dmesg`.
+
+> 💡 Plus stable entre versions : `tracepoint:oom:mark_victim`, qui expose directement le pid de la victime via `args->pid`.
 
 ## 📋 Étape 4 — Comprendre les maps
 
-Les **maps** sont la structure de données partagée kernel ↔ userspace. Types principaux :
+Les **maps** sont la structure de données partagée kernel ↔ userspace. Le programme BPF est sans état entre deux déclenchements : pour accumuler un compteur, mesurer une latence ou émettre un événement, il faut un stockage persistant — c'est le rôle des maps. Elles sont créées au chargement, accessibles depuis le kernel (lecture/écriture par le programme BPF) et depuis l'userspace (lecture/écriture par l'application de contrôle via le `bpf()` syscall, commandes `BPF_MAP_LOOKUP_ELEM` / `BPF_MAP_UPDATE_ELEM`).
+
+<Mermaid chart={`flowchart LR
+  hook["Event kernel\n(syscall, paquet...)"] --> probe["Programme BPF\nattaché au hook"]
+  probe -->|"@map[clé] = val"| map[("BPF map\nhash / per-cpu")]
+  probe -->|"événement"| rb[("ring buffer")]
+  map -->|"bpf() lookup\n(polling)"| us["Userspace\nbpftrace / agent"]
+  rb -->|"lecture\nnon-bloquante"| us`} caption="Chaîne sonde → map / ring buffer → userspace : deux canaux de remontée. Les maps servent à l'agrégation (compteurs, histogrammes) ; le ring buffer au streaming d'événements individuels." />
 
 ```
-  hash       → table clé/valeur (équivalent dict)
-  array      → tableau index numérique
-  per-cpu    → un slot par CPU (évite contention)
-  lru-hash   → éviction LRU automatique
-  ringbuf    → ring buffer kernel→userspace (succès moderne)
-  perf_event → ring buffer (ancien)
-  prog_array → tail calls
+  hash       → table clé/valeur (équivalent dict)         @[key] = val
+  array      → tableau index numérique                    @idx[n] = val
+  per-cpu    → un slot par CPU (évite contention)         @pcpu[key] = val
+  lru-hash   → éviction LRU automatique (taille bornée)
+  ringbuf    → ring buffer kernel→userspace (succès moderne, low-latency)
+  perf_event → ring buffer (ancien, compatible)
+  prog_array → tail calls (chaîner des programmes BPF)
 ```
 
-Exemple : compteur global avec map array
+Le `ringbuf` est particulièrement important pour les outils de tracing haute performance : le programme BPF écrit des événements dans le ring buffer, l'userspace les lit de manière non-bloquante. C'est le mécanisme qu'utilisent Falco et Tracee pour transmettre les événements de sécurité sans perdre d'events.
 
 ```bash
 sudo bpftrace -e '
@@ -228,6 +273,8 @@ END { print(@count); }
 '
 ```
 
+`BEGIN` et `END` sont des actions spéciales bpftrace déclenchées au démarrage et à l'arrêt. `uid` est une variable built-in contenant l'UID courant. La map `@count` accumule les compteurs par UID — au `Ctrl+C`, `END` affiche le résultat.
+
 → après Ctrl+C, tu vois `@count[0]: 12340 / @count[1000]: 234 / ...`
 
 ## 📋 Étape 5 — Quand passer au C / libbpf
@@ -237,14 +284,12 @@ bpftrace est génial pour explorer. Pour un outil **permanent** distribué à de
 - Pas de dépendance bpftrace en prod
 - Code typé, testé, CI/CD
 - Binaire unique
-- Symboles BTF embarqués (CO-RE)
+- Symboles BTF embarqués (CO-RE — Compile Once Run Everywhere)
 
 Stack moderne :
-- **C + libbpf** : la référence
-- **Rust + aya** : sécurité types, moderne
-- **Go + cilium/ebpf** : ergonomique, infra k8s
-
-Exemple minimal libbpf (skeleton) :
+- **C + libbpf** : la référence — `libbpf-bootstrap` fournit un squelette
+- **Rust + aya** : sécurité types, moderne, excellent pour les outils sécurité
+- **Go + cilium/ebpf** : ergonomique, utilisé par Cilium, Falco, Tetragon
 
 ```c
 // trace.bpf.c — programme BPF
@@ -259,13 +304,17 @@ int handle_openat(struct trace_event_raw_sys_enter *ctx) {
 char LICENSE[] SEC("license") = "GPL";
 ```
 
-Compilation :
+`SEC("tracepoint/syscalls/sys_enter_openat")` marque la fonction avec la section ELF appropriée — libbpf s'en sert pour attacher automatiquement le programme au bon hook. `vmlinux.h` est généré depuis les informations BTF du kernel et contient toutes les structures kernel typées. `bpf_get_current_pid_tgid()` retourne un u64 contenant `(tgid << 32 | pid)` — le shift de 32 bits extrait le PID du groupe de threads (ce qu'on appelle "PID" en userspace). `char LICENSE[] SEC("license") = "GPL"` est obligatoire pour accéder aux kfuncs GPL-only.
 
 ```bash
-clang -O2 -target bpf -c trace.bpf.c -o trace.bpf.o
-sudo bpftool prog load trace.bpf.o /sys/fs/bpf/trace
-sudo cat /sys/kernel/debug/tracing/trace_pipe
+clang -O2 -g -target bpf -c trace.bpf.c -o trace.bpf.o
+sudo bpftool prog loadall trace.bpf.o /sys/fs/bpf/trace autoattach
+sudo cat /sys/kernel/debug/tracing/trace_pipe   # bpf_printk écrit ici
 ```
+
+`clang -g -target bpf` génère le bytecode BPF **avec BTF** (indispensable au CO-RE). `bpftool prog loadall ... autoattach` charge le programme, le pin dans le BPF filesystem (`/sys/fs/bpf`) **et** l'attache automatiquement au tracepoint déclaré dans la section `SEC(...)`. Sans `autoattach`, un simple `prog load` charge le bytecode mais le programme ne se déclenche jamais (il n'est lié à aucun hook). Les messages `bpf_printk()` ressortent dans `trace_pipe`.
+
+> 💡 En production on n'utilise pas `bpf_printk` (lent, partagé, global). On remonte plutôt via un ring buffer. `bpf_printk` est un outil de debug.
 
 ## 📋 Étape 6 — Impact perf
 
@@ -282,17 +331,21 @@ sudo bpftrace -e 'tracepoint:syscalls:sys_enter_openat
                   /comm == "find"/ { @ = count(); }' &
 ```
 
-Règle empirique :
-- Sonde **sans filtre** sur un hot path : 5-50% overhead.
-- Sonde **avec filtre dès le début** : < 1%.
+Important : le programme BPF est exécuté à **chaque** `openat` de tous les processes — le hook tracepoint se déclenche toujours, le filtre ne supprime pas ce coût de base. Ce que le filtre `/comm == "find"/` change, c'est qu'il court-circuite tôt le travail coûteux (mise à jour de map, copie de string via `str()`) pour les events non pertinents : la comparaison de `comm` est quelques instructions, alors qu'un `str(args->filename)` + update de hash map est bien plus cher. D'où une grosse réduction de l'overhead effectif quand seul un petit sous-ensemble des events t'intéresse.
+
+> 💡 Pour vraiment supprimer le déclenchement, il faut filtrer *en amont du hook* : un kprobe sur une fonction spécifique, ou un programme attaché à un cgroup/PID précis, plutôt qu'un tracepoint global.
+
+Règle empirique (ordre de grandeur, dépend du hot path) :
+- Sonde **sans filtre** + action coûteuse sur un hot path : de quelques % à 30-50% d'overhead.
+- Sonde **avec filtre précoce** et action légère : généralement < 1%.
 
 ## 🧠 Pitfalls
 
-❌ **`kprobe` sur fonction inlinée** : le kernel optimise certaines fonctions → kprobe absent. Vérifie avec `kprobe-list`.
-❌ **Boucle non bornée** → verifier refuse. Utilise `#pragma unroll` ou redessine.
-❌ **Toucher des pointers userspace direct** : `bpf_probe_read_user()`, jamais déréf direct.
-❌ **Penser que bpftrace = production** : ses overheads sont OK en debug, pas en hot path 24/7.
-❌ **Charger un BPF sans symboles BTF** : portabilité ratée. Active `CONFIG_DEBUG_INFO_BTF=y`.
+❌ **`kprobe` sur fonction inlinée ou optimisée** : le kernel peut inliner une fonction → elle n'a plus de symbole attachable. Vérifie sa présence avec `sudo bpftrace -l 'kprobe:vfs_*'` ou `grep vfs_read /proc/kallsyms`. Si absente, cherche un tracepoint équivalent ou la fonction appelante.
+❌ **Boucle non bornée** → verifier refuse. Utilise `bpf_loop()` (kernel ≥ 5.17), une boucle à compteur prouvable, ou `#pragma unroll`.
+❌ **Déréférencer un pointeur directement** : passe par `bpf_probe_read_kernel()` / `bpf_probe_read_user()` (en bpftrace, `str()`/`kptr()`/`uptr()`), jamais de déréférence brute d'un pointeur non prouvé sûr.
+❌ **Penser que bpftrace = production** : il recompile à chaque lancement et a un overhead OK en debug, pas en hot path 24/7. Pour du permanent : libbpf/aya/cilium-ebpf.
+❌ **Charger un BPF sans BTF kernel** : pas de CO-RE → portabilité ratée. Vérifie `ls /sys/kernel/btf/vmlinux` et `CONFIG_DEBUG_INFO_BTF=y`.
 
 ## 🔬 Validation
 

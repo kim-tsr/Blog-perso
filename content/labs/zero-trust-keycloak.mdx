@@ -1,7 +1,7 @@
 ---
 title: "Zero Trust en pratique : IdP Keycloak + microsegmentation"
 slug: zero-trust-keycloak
-objective: "Comprendre les 5 piliers Zero Trust (NIST SP 800-207), déployer Keycloak comme IdP, brancher des apps en OIDC, et appliquer du microsegmentation L7 avec Cilium NetworkPolicies."
+objective: "Comprendre les tenets Zero Trust (NIST SP 800-207) et les 5 piliers de maturité (CISA ZTMM), déployer Keycloak comme IdP, brancher des apps en OIDC, et appliquer de la microsegmentation L7 avec Cilium NetworkPolicies."
 tag: Cybersécurité
 theme: cyan
 difficulty: avancé
@@ -22,15 +22,15 @@ quiz:
       - "Tout chiffrer"
       - "Pas de VPN"
     correct: 1
-    explanation: "Modèle pré-ZT : intra-net = confiance (LAN, VPN), extra-net = méfiance. Mais 70% des breaches viennent de mouvements latéraux internes. ZT supprime la notion de 'dedans' : un serveur DMZ et un endpoint home ont la même default-deny. Vérification continue, pas one-shot au login."
-  - question: "Quels sont les 5 piliers Zero Trust (NIST SP 800-207) ?"
+    explanation: "Modèle pré-ZT : intra-net = confiance (LAN, VPN), extra-net = méfiance. Or le mouvement latéral interne est au cœur des intrusions majeures : une fois dedans, l'attaquant circule librement. ZT supprime la notion de 'dedans' : un serveur DMZ et un poste à domicile ont le même default-deny. Vérification continue, pas one-shot au login."
+  - question: "Quels sont les 5 piliers du Zero Trust Maturity Model (CISA) ?"
     options:
       - "VPN, MFA, VLAN, Firewall, IDS"
-      - "Identité, Appareil (device), Réseau, Charge de travail (workload), Données — chaque pilier doit avoir sa propre maturité, 80% des orgs commencent par l'identité (vecteur attaque #1)"
+      - "Identité, Appareil (device), Réseau, Charge de travail (workload/applications), Données — chaque pilier a sa propre maturité ; beaucoup d'orgs commencent par l'identité (vecteur d'attaque #1)"
       - "Cloud, On-prem, Hybrid, Edge, IoT"
       - "Aucun, c'est un buzzword"
     correct: 1
-    explanation: "Modèle pilier officiel NIST. Identité (qui), Device (depuis quoi — posture managed/compliant), Réseau (où — segmentation), Workload (le service appelé — propre identité aussi), Data (sensibilité, classification). Une stratégie mature couvre les 5."
+    explanation: "Attention à l'attribution : les 5 piliers viennent du CISA Zero Trust Maturity Model, pas directement du NIST SP 800-207 (qui définit lui les tenets et l'architecture logique PE/PA/PEP). Identité (qui), Device (depuis quoi — posture managed/compliant), Réseau (segmentation), Workload/Applications (le service appelé a sa propre identité), Data (sensibilité, classification). Une stratégie mature couvre les 5."
   - question: "Pourquoi 80% des breaches impliquent-elles des credentials compromis ?"
     options:
       - "Hasard"
@@ -59,40 +59,17 @@ quiz:
 
 ## 🧠 Théorie : pourquoi Zero Trust ?
 
-### Le château fort vs Zero Trust
+Le modèle de sécurité périmétrique — le « château fort » — repose sur une prémisse simple : ce qui est à l'intérieur du réseau est de confiance, ce qui est à l'extérieur ne l'est pas. Ce modèle a fonctionné quand les applications tournaient dans un datacenter physique unique, quand les employés travaillaient depuis le bureau, et quand les périmètres étaient stables.
 
-```
-   MODÈLE PÉRIMÉTRIQUE (château fort)
-   ────────────────────────────────────
-   
-       Internet
-          │
-          ▼
-   ┌─────FIREWALL─────┐
-   │  TRUSTED LAN     │  ← une fois dedans, libre circulation
-   │  ┌────┐  ┌────┐  │     entre tous les serveurs
-   │  │app1│  │app2│  │     ⚠️ déplacement latéral facile
-   │  └────┘  └────┘  │
-   └──────────────────┘
+Il est aujourd'hui fondamentalement cassé. Les applications sont dans le cloud, les données dans des SaaS, les développeurs travaillent de partout, et les fournisseurs ont des accès VPN. Le périmètre n'existe plus. Et surtout : une fois le périmètre franchi, l'attaquant se déplace **latéralement** sans obstacle — un seul point d'entrée compromis donne accès à tout ce qui fait confiance à ce qui est « dedans ». Les rapports d'incident (Verizon DBIR, Mandiant M-Trends) montrent année après année que ce mouvement latéral interne est au cœur des intrusions majeures.
 
-   MODÈLE ZERO TRUST
-   ─────────────────
-   
-       Internet ─ User ─ LAN ─ DMZ : tous traités pareil
-                         │
-                         ▼
-           Chaque requête vers chaque service :
-              ┌────────────────────────────┐
-              │ 1. Identité valide ?       │
-              │ 2. Device compliant ?       │
-              │ 3. Policy autorise ?       │
-              │ 4. Step-up MFA ?           │
-              └────────────────────────────┘
-              ↓ si tout OK ↓
-                 ACCÈS SCOPED
-```
+Zero Trust répond à cette réalité avec un principe radical : **Never trust, always verify**. Pas de confiance implicite basée sur la position réseau, l'IP source, ou le VPN. À chaque requête vers chaque ressource, on vérifie : qui demande, depuis quel device, dans quel contexte, avec quelle sensibilité de ressource. La vérification est continue, pas one-shot au login.
 
-### Les 5 piliers NIST SP 800-207
+### Tenets NIST et 5 piliers de maturité (CISA)
+
+Deux références à ne pas confondre. Le **NIST SP 800-207** (2020) est le document fondateur : il énonce 7 *tenets* (ressources, sessions, vérification dynamique...) et une architecture logique en trois organes — **PE** (Policy Engine, décide), **PA** (Policy Administrator, applique la décision), **PEP** (Policy Enforcement Point, exécute sur le flux). Keycloak joue ici le rôle de PE/PA pour l'identité, oauth2-proxy et Cilium celui de PEP.
+
+Le modèle des **5 piliers** vient du **CISA Zero Trust Maturity Model (ZTMM)**, qui opérationnalise ces principes en domaines mesurables. Chaque pilier est un axe de maturité indépendant — une organisation peut être mature sur l'identité et faible sur le réseau. Beaucoup commencent par l'identité, car c'est le vecteur d'attaque numéro 1 (phishing, credential stuffing, vol de session).
 
 | Pilier | Question | Outils |
 |---|---|---|
@@ -102,19 +79,43 @@ quiz:
 | **Workload** | Le service appelé a-t-il son ID ? | SPIFFE/SPIRE, service mesh |
 | **Data** | Quelle sensibilité ? | DLP, classification, encryption |
 
-### Architecture cible
+Ce lab couvre principalement les piliers **Identité** (Keycloak + OIDC) et **Réseau** (Cilium + microsegmentation L7). Les piliers Device et Workload sont abordés dans les labs dédiés WireGuard et step-ca.
 
-```
-   Client ──► Cloudflare ──► oauth2-proxy ──► App
-                                  ▲
-                                  │ OIDC
-                                  ▼
-                              Keycloak
-                              (IdP central)
-                                  │
-                                  ▼
-                       LDAP/OIDC fédéré
-```
+### OIDC : le protocole d'identité fédérée
+
+OpenID Connect (OIDC) est une couche d'identité construite par-dessus OAuth 2.0. OAuth 2.0 résout le problème d'**autorisation déléguée** (une app peut agir pour le compte d'un user, avec son consentement, sans voir son mot de passe). OIDC y ajoute l'**authentification** : une preuve cryptographique de l'identité de l'utilisateur, encodée dans un ID Token (JWT).
+
+Il existe plusieurs types de flows OIDC, chacun adapté à un type de client différent :
+
+<Mermaid chart={`
+sequenceDiagram
+    participant U as Utilisateur
+    participant App as Application (SPA/Server)
+    participant KC as Keycloak (IdP)
+    participant API as API Resource
+    U->>App: Accès page protégée
+    App->>KC: Redirect — Authorization Request\n(response_type=code, scope=openid profile, code_challenge=PKCE)
+    KC->>U: Page de login
+    U->>KC: Credentials + MFA
+    KC->>App: Redirect avec authorization_code
+    App->>KC: POST /token\n(code + code_verifier PKCE)
+    KC->>App: ID Token + Access Token + Refresh Token
+    App->>U: Session établie (cookie sécurisé)
+    App->>API: Bearer access_token
+    API->>KC: Introspect / JWKS verify
+    KC->>API: Claims validés
+    API->>App: Réponse autorisée
+`} caption="Authorization Code Flow avec PKCE : le flow recommandé pour les apps web et SPAs" />
+
+Le **PKCE** (Proof Key for Code Exchange, RFC 7636) est un mécanisme de sécurité qui protège contre l'interception du `code` par une autre app sur le même device. Le client génère un `code_verifier` aléatoire, en calcule le hash (`code_challenge`), et envoie le hash avec la requête initiale. Lors de l'échange du code contre le token, il envoie le `code_verifier` original — Keycloak vérifie que le hash correspond. Même si le code est intercepté, il est inutilisable sans le `code_verifier`.
+
+### Scopes vs Claims : quelle différence ?
+
+Les **scopes** sont des permissions demandées par le client à l'IdP : `openid` (obligatoire pour OIDC), `profile` (nom, prénom), `email`, `roles`. Ce sont des chaînes de texte dans la requête d'autorisation.
+
+Les **claims** sont les assertions dans le token lui-même, correspondant aux scopes accordés. Le scope `profile` produit les claims `name`, `given_name`, `family_name`. Le scope `roles` produit le claim `realm_access.roles`. Les claims sont signés par l'IdP — leur intégrité est vérifiable par n'importe quel service ayant la clé publique JWKS de Keycloak.
+
+Les **Refresh Tokens** permettent d'obtenir un nouvel access token sans re-login. Ils ont une durée de vie plus longue (heures à jours) et sont rotatifs dans Keycloak : à chaque usage, un nouveau refresh token est émis et l'ancien invalidé. En Zero Trust, on configure des access tokens courts (15 min) avec refresh : le client re-vérifie fréquemment l'identité et les droits, mais l'UX reste fluide.
 
 ## 🎯 Objectif
 
@@ -166,6 +167,10 @@ spec:
   ports: [{port: 8080}]
 ```
 
+On utilise un `StatefulSet` plutôt qu'un `Deployment` parce que Keycloak en mode cluster requiert une identité stable pour les communications Infinispan (distributed cache). En mode `start-dev` (dev uniquement), ce point n'est pas critique, mais l'habitude de `StatefulSet` pour les IdPs avec état est bonne à prendre. Le mot de passe admin est récupéré depuis un Secret Kubernetes — ne jamais l'inliner dans le YAML.
+
+> ⚠️ Le manifeste ci-dessus déclare `KC_DB=postgres` et pointe vers un service `postgres:5432` : il suppose donc qu'une instance PostgreSQL tourne déjà dans le namespace `iam` (sinon le pod boucle en `CrashLoopBackOff`). Pour un premier essai rapide, retirez les variables `KC_DB`/`KC_DB_URL` : `start-dev` utilisera alors une base H2 en mémoire, suffisante pour le lab mais **non persistante** (tout est perdu au redémarrage du pod). Pour persister, déployez un Postgres (`StatefulSet` + PVC) au préalable.
+
 ```bash
 kubectl apply -f keycloak.yaml
 kubectl port-forward -n iam svc/keycloak 8080:8080
@@ -184,6 +189,10 @@ Dans l'UI Keycloak :
    - Valid Redirect URIs: `https://kibana.homelab.lan/oauth2/callback`
 3. Note le **Client Secret** dans Credentials
 4. **Users → Create** → alice, mot de passe temporaire + reset
+
+Un **realm** dans Keycloak est un namespace isolé avec ses propres users, clients, rôles et configurations. Le realm `master` est réservé à l'administration Keycloak lui-même. Toutes vos applications utilisent des realms séparés — c'est un principe de séparation des préoccupations.
+
+Un client `confidential` (par opposition à `public`) dispose d'un `client_secret` connu uniquement du serveur — le client doit s'authentifier auprès de Keycloak avant d'obtenir un token. C'est obligatoire pour les apps server-side. Les SPAs (JavaScript front-end) utilisent des clients `public` avec PKCE obligatoire.
 
 ## 📋 Étape 3 — oauth2-proxy devant une app
 
@@ -218,7 +227,28 @@ spec:
         ports: [{containerPort: 4180}]
 ```
 
+oauth2-proxy implémente le pattern « **sidecar auth** ». Il se place devant l'application upstream (`--upstream=http://kibana:5601`) et intercepte chaque requête. Si le cookie de session est absent ou expiré, il redirige vers Keycloak. Si le token est valide, il passe la requête à Kibana en ajoutant les headers `X-Forwarded-User`, `X-Forwarded-Email`, `Authorization: Bearer <token>`. Kibana reçoit une requête déjà authentifiée sans avoir besoin de connaître Keycloak.
+
+`--pass-access-token=true` injecte l'access token Keycloak dans un header `X-Forwarded-Access-Token` — utile si Kibana (ou une app custom) veut vérifier les rôles ou appeler des APIs tierces avec le token de l'utilisateur.
+
 Ingress route : `https://kibana.homelab.lan` → oauth2-proxy → kibana. Toute requête sans token valide → redirect login Keycloak.
+
+<Topology
+  nodes={[
+    { id: 'u',  kind: 'user',    label: 'Utilisateur',     col: 1, row: 1, accent: 'c' },
+    { id: 'ig', kind: 'edge',    label: 'Ingress',          col: 2, row: 1, accent: 'c' },
+    { id: 'op', kind: 'service', label: 'oauth2-proxy\n(PEP)', col: 3, row: 1, accent: 'c' },
+    { id: 'kc', kind: 'service', label: 'Keycloak\n(PE/PA)',  col: 3, row: 2, accent: 'c' },
+    { id: 'kb', kind: 'service', label: 'Kibana',            col: 4, row: 1, accent: 'c' },
+  ]}
+  edges={[
+    { from: 'u',  to: 'ig', kind: 'flow', label: 'HTTPS' },
+    { from: 'ig', to: 'op', kind: 'flow' },
+    { from: 'op', to: 'kc', kind: 'data', label: 'OIDC / redirect' },
+    { from: 'op', to: 'kb', kind: 'flow', label: 'CNP L7 GET /api' },
+  ]}
+  caption="Chemin d'une requête authentifiée : le PEP (oauth2-proxy) vérifie le token auprès du PE/PA (Keycloak), puis Cilium n'autorise que les flux L7 prévus vers Kibana"
+/>
 
 ## 📋 Étape 4 — Microsegmentation Cilium L7
 
@@ -261,6 +291,12 @@ spec:
     - ports: [{port: "9200", protocol: TCP}]
 ```
 
+La politique `default-deny` avec `endpointSelector: {}` (tous les endpoints du namespace) et `ingress: []` / `egress: []` (listes vides = tout refusé) est le principe fondateur de la microsegmentation : **default-deny, allowlist explicite**. Sans cette politique, Kubernetes autorise par défaut tout trafic entre pods — l'inverse de Zero Trust.
+
+La règle `kibana-allow` illustre la puissance de Cilium L7 : elle ne se contente pas d'autoriser le trafic TCP vers le port 5601, elle va jusqu'au niveau applicatif HTTP (`rules.http`) pour n'autoriser que les méthodes GET sur les paths `/api/.*` et `/`. Cilium inspecte le protocole applicatif via un proxy Envoy injecté par eBPF — une granularité impossible avec des NetworkPolicies Kubernetes standard (qui opèrent en L3/L4 uniquement).
+
+> ⚠️ Le filtre `GET` seul est **pédagogique** : un vrai Kibana a besoin de `POST` (recherches, sauvegardes) et de WebSockets. Ne reproduisez ce verrouillage L7 strict que sur des APIs réellement en lecture seule. Notez aussi que le filtrage L7 a un coût : chaque connexion concernée transite par le proxy Envoy de Cilium (légère latence et CPU en plus), à réserver aux flux sensibles plutôt qu'à tout le cluster.
+
 → même si quelqu'un compromet le pod monitoring/curl-tool, il ne peut **pas** parler à kibana directement (ingress refusé). Seul oauth2-proxy peut. Et oauth2-proxy ne sert que les paths autorisés.
 
 ## 📋 Étape 5 — Vérifier avec Hubble
@@ -282,6 +318,8 @@ hubble observe --verdict DROPPED
 # → ligne avec policy="kibana-allow"
 ```
 
+Hubble est l'outil d'observabilité réseau de Cilium. Il expose un flux temps réel de tous les événements réseau (allows et drops) avec le contexte Kubernetes complet (namespace, pod, label, policy). La commande `--verdict DROPPED` filtre uniquement les paquets refusés par une network policy — c'est votre outil de debugging et d'audit de conformité Zero Trust.
+
 ## 📋 Étape 6 — Conditional Access
 
 Dans Keycloak : **Authentication → Flows → Browser** → ajouter un `Conditional Subflow` :
@@ -296,6 +334,8 @@ Dans Keycloak : **Authentication → Flows → Browser** → ajouter un `Conditi
            ├── Condition: User Configured
            └── OTP Form
 ```
+
+Le flow d'authentification Keycloak est un graphe de décision configurable. Chaque nœud est un « authenticator » : il peut s'exécuter (Required), être optionnel (Optional), ou être conditionnel (Conditional, avec une `Condition` qui évalue le contexte). La structure ci-dessus implémente un MFA adaptatif : TOTP demandé seulement aux utilisateurs qui l'ont configuré, obligatoire pour le rôle `admin`.
 
 → MFA TOTP optionnel si user l'a configuré, obligatoire si user appartient au role `admin`.
 

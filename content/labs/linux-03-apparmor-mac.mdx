@@ -2,8 +2,8 @@
 title: "Linux #3 — AppArmor : du DAC au MAC"
 slug: linux-03-apparmor-mac
 objective: "Comprendre DAC vs MAC, écrire un profile AppArmor pour un binaire, utiliser complain mode pour le générer, basculer en enforce, et debugger une dénégation."
-tag: Cybersécurité
-theme: cyan
+tag: Systèmes
+theme: magenta
 difficulty: avancé
 duration: "65 min"
 minRole: pro
@@ -63,51 +63,32 @@ quiz:
 
 ### DAC : faillible par design
 
-```
-   Permissions Unix (DAC)            Limites
-   ───────────────────────           ────────
-   
-   -rw-r--r-- root root /etc/shadow  ✓ user 'alice' bloqué
-                                     ✗ root y accède toujours
-                                     ✗ un setuid root y accède
-                                     ✗ un process avec CAP_DAC_READ_SEARCH y accède
-                                     ✗ si quelqu'un change les perms : game over
-```
+Les permissions Unix (Discretionary Access Control) fonctionnent sur un principe simple : le **propriétaire** d'une ressource décide qui peut y accéder. `chmod 600 /etc/shadow` dit "seul root peut lire ce fichier". Mais cette formulation contient une faille fondamentale : si tu **es** root, ou si tu peux devenir root, le contrôle disparaît.
 
-### MAC : couche orthogonale
+DAC a quatre vecteurs de contournement bien connus :
+- **root bypass** : UID 0 ignore les permissions Unix pour la lecture/écriture
+- **setuid escalade** : un binaire setuid root donne UID 0, qui court-circuite DAC
+- **CAP_DAC_OVERRIDE** : capability qui contourne les vérifications de permission FS
+- **ACL modification** : le propriétaire peut toujours changer ses propres ACLs
 
-```
-       ┌──────────────────────────────────────────┐
-       │   Process X tente d'ouvrir /etc/shadow   │
-       └──────────────────────────────────────────┘
-                          │
-                          ▼
-              ┌────────────────────────┐
-              │  1. Check DAC          │
-              │     (perms + caps)     │
-              └────────────────────────┘
-                          │
-                          ▼
-                     DAC dit OK ?
-                  ┌────┴────┐
-                  │         │
-                NON        OUI
-                  │         ▼
-                  │   ┌────────────────────────┐
-                  │   │  2. Check MAC          │
-                  │   │     (AppArmor/SELinux) │
-                  │   └────────────────────────┘
-                  │         │
-                  │         ▼
-                  │    MAC dit OK ?
-                  │   ┌────┴────┐
-                  │  NON       OUI
-                  │   │         │
-                  ▼   ▼         ▼
-                  REFUSÉ      AUTORISÉ
-```
+### MAC : la couche orthogonale
 
-→ **Il faut que les DEUX disent oui.** Une faille DAC (ex: setuid bug) ne donne pas le contrôle si MAC bloque.
+Le Mandatory Access Control (MAC) est une politique d'accès définie par un **administrateur système**, pas par le propriétaire de la ressource. La propriété "mandatory" signifie que même root ne peut pas la contourner — le kernel l'applique après les vérifications DAC, et les deux doivent dire "oui".
+
+<Mermaid chart={`
+flowchart TD
+    A["Process tente d'accéder à /etc/shadow"] --> B{"1. Check DAC\nperms + caps"}
+    B -- "DAC refuse" --> R1["REFUSÉ\nEACCES"]
+    B -- "DAC OK" --> C{"2. Check MAC\nAppArmor / SELinux"}
+    C -- "MAC refuse" --> R2["REFUSÉ\nEACCES + audit log"]
+    C -- "MAC OK" --> OK["ACCÈS ACCORDÉ"]
+`} caption="Les deux contrôles sont séquentiels et indépendants — il faut que les DEUX disent oui" />
+
+### AppArmor : attach par path, police par profile
+
+AppArmor est un module LSM (Linux Security Module) intégré au kernel depuis Linux 2.6.36. Son approche est **path-based** : un profile est associé au chemin absolu du binaire. Quand `/usr/bin/nginx` est exécuté, AppArmor charge automatiquement le profile `/etc/apparmor.d/usr.bin.nginx`.
+
+Chaque profile liste exhaustivement ce que ce binaire peut faire : quels fichiers lire/écrire, quels réseaux contacter, quelles capabilities exercer. Tout ce qui n'est pas explicitement autorisé est refusé.
 
 ### AppArmor vs SELinux en 1 tableau
 
@@ -121,6 +102,13 @@ quiz:
 | **Courbe** | 2 jours | 2 semaines |
 
 Choisis selon ce qu'utilise ta distrib. Les deux sont **MAC complets**.
+
+<Stack layers={[
+  { label: 'Requête d\'accès applicative', accent: 'v' },
+  { label: 'DAC : permissions Unix + capabilities', hint: 'chmod · setuid · ACLs', accent: 'c' },
+  { label: 'MAC : AppArmor LSM hook', hint: 'Profile enforce · complain', accent: 's' },
+  { label: 'Kernel VFS — accès effectif', accent: 'dim' },
+]} bottom="last" caption="Pile de contrôle d'accès : DAC et MAC sont deux couches indépendantes — les deux doivent être franchies" />
 
 ## 🎯 Objectif
 
@@ -140,31 +128,41 @@ sudo aa-status
 # 12 processes are in enforce mode.
 ```
 
+`aa-status` interroge le module kernel AppArmor via `/sys/kernel/security/apparmor/`. Il liste chaque profile chargé et son mode (enforce vs complain), ainsi que les processus actuellement sous un profile.
+
 Inspecter un profile existant :
 
 ```bash
 sudo cat /etc/apparmor.d/usr.sbin.nginx
 ```
 
-Tu vois la syntaxe : règles `path mode,` (mode = `r` `w` `m` `ix`, etc.) et des includes (`#include <abstractions/base>`).
+Tu vois la syntaxe : règles `path mode,` (mode = `r` `w` `m` `ix`, etc.) et des includes (`#include <abstractions/base>`). Les `abstractions/` sont des fichiers partagés contenant des règles communes (accès à la libc, à NSS, aux locales) — ils évitent de dupliquer ces règles dans chaque profile.
 
 ## 📋 Étape 2 — Notre cible : un script Python custom
 
 ```bash
 sudo tee /usr/local/bin/log-collector <<'EOF'
 #!/usr/bin/env python3
-"""Lit les logs nginx et écrit un résumé."""
-import os, glob
+"""Lit les logs nginx et écrit un résumé.
+Si un chemin est passé en argument, le lit aussi (simule une injection)."""
+import sys, glob
 with open('/var/log/collector.out', 'w') as out:
     for f in glob.glob('/var/log/nginx/access.log*'):
         with open(f) as fh:
             out.write(f"{f}: {sum(1 for _ in fh)} lines\n")
+    # Chemin attaquant éventuel (ex: --exfil /etc/shadow) → simule une LFI/injection
+    for arg in sys.argv[1:]:
+        if arg.startswith('/'):
+            with open(arg) as fh:           # <-- accès qu'AppArmor devra refuser
+                out.write(f"EXFIL {arg}: {fh.read(64)!r}\n")
 EOF
 sudo chmod +x /usr/local/bin/log-collector
 sudo /usr/local/bin/log-collector   # marche, lit tout sans contrainte
 ```
 
-Sans AppArmor, ce script peut lire ce qu'il veut (uid=root par défaut, ou en sudo).
+Le second `for` simule volontairement une faille (injection de chemin) : sans MAC, `sudo log-collector /etc/shadow` lirait `/etc/shadow` sans aucun obstacle. C'est précisément ce comportement qu'AppArmor neutralisera en enforce, sans qu'on touche au code.
+
+Sans AppArmor, ce script peut lire ce qu'il veut (uid=root par défaut, ou en sudo). Un bug ou une injection dans ce script permettrait de lire `/etc/shadow`, exfiltrer des clés SSH, etc.
 
 ## 📋 Étape 3 — Bootstrap d'un profile avec aa-genprof
 
@@ -193,7 +191,7 @@ Severity:   3
 [(A)llow / (D)eny / (I)gnore / (G)lob / (N)ew]
 ```
 
-Tu choisis le bon niveau de glob (`G` plusieurs fois pour étendre, puis `A` pour autoriser). À la fin, `F` pour finaliser.
+`aa-genprof` tourne l'app en **complain mode** et parse les événements depuis `auditd`/`journald`. Chaque accès fichier, réseau ou capability observé est présenté avec des options de niveaux de granularité. Tu choisis le bon niveau de glob (`G` plusieurs fois pour étendre, puis `A` pour autoriser). À la fin, `F` pour finaliser.
 
 Le profile est créé dans `/etc/apparmor.d/usr.local.bin.log-collector`.
 
@@ -214,19 +212,19 @@ Le profile est créé dans `/etc/apparmor.d/usr.local.bin.log-collector`.
 }
 ```
 
-Décodage :
+`#include <tunables/global>` charge les variables globales (ex: `@{HOME}`, `@{PROC}`). `#include <abstractions/base>` ajoute les règles nécessaires à tout process Linux (libc, locale, DNS). `#include <abstractions/python>` ajoute les accès nécessaires à l'interpréteur Python (stdlib, .pyc, etc.).
 
 | Token | Sens |
 |---|---|
-| `r` | read |
-| `w` | write |
-| `a` | append |
-| `m` | mmap PROT_EXEC |
-| `ix` | exec, inherit profile parent |
-| `Px`, `Cx` | exec, switch profile |
-| `Ux` | exec, unconfined (à éviter !) |
-| `**` | glob récursif |
-| `#include` | importe un set commun |
+| `r` | read — `open(O_RDONLY)` |
+| `w` | write — `open(O_WRONLY/RDWR)`, `truncate()` |
+| `a` | append — `open(O_APPEND)` |
+| `m` | mmap avec `PROT_EXEC` |
+| `ix` | exec, **inherit** le profile parent — le process enfant reste sous le même profile |
+| `Px`, `Cx` | exec, **switch** vers un nouveau profile (enfant a son propre profile) |
+| `Ux` | exec, **unconfined** — sort complètement du MAC (à éviter absolument) |
+| `**` | glob récursif — tous les fichiers dans l'arbre |
+| `#include` | importe un set commun de règles |
 
 ## 📋 Étape 5 — Complain mode pour itérer
 
@@ -236,14 +234,14 @@ sudo aa-status | grep log-collector
 # usr.local.bin.log-collector  (complain)
 ```
 
-Lance l'app dans des cas variés (rotation logs, gros volumes, edge cases…). Les violations sont loggées sans bloquer.
+En complain mode, AppArmor génère un événement audit pour chaque accès qui **aurait été refusé** en enforce, mais l'autorise quand même. C'est le "training mode" : tu peux observer les accès légitimes de l'app sans la casser.
 
 ```bash
 sudo journalctl -k --since "10 min ago" | grep apparmor=\"ALLOWED\"
 # → liste de chaque accès qui aurait été bloqué en enforce
 ```
 
-Affine avec `aa-logprof` : parse les logs, te propose d'ajouter les nouvelles règles.
+Lance l'app dans des cas variés (rotation logs, gros volumes, edge cases…). Les violations sont loggées sans bloquer. Affine avec `aa-logprof` : parse les logs, te propose d'ajouter les nouvelles règles.
 
 ## 📋 Étape 6 — Enforce et test
 
@@ -255,12 +253,12 @@ sudo /usr/local/bin/log-collector
 cat /var/log/collector.out
 # OK
 
-# Test : tentative d'opération NON autorisée
-sudo /usr/local/bin/log-collector --exfil /etc/shadow
-# → DENIED dans les logs kernel
+# Test : tentative d'opération NON autorisée (lecture hors profile)
+sudo /usr/local/bin/log-collector /etc/shadow
+# → l'open() sur /etc/shadow lève PermissionError + DENIED dans les logs kernel
 ```
 
-Vérification :
+En enforce mode, chaque accès non autorisé génère immédiatement un `EACCES` et un événement audit.
 
 ```bash
 sudo journalctl -k | grep apparmor=\"DENIED\"
@@ -269,6 +267,8 @@ sudo journalctl -k | grep apparmor=\"DENIED\"
 #   name="/etc/shadow" pid=12345 comm="log-collector"
 #   requested_mask="r" denied_mask="r" fsuid=0 ouid=0
 ```
+
+Le log expose : le **profile** actif, l'**opération** tentée (`open`), le **path** cible, le **masque demandé** (`r`) et le **masque refusé** (`r`). `fsuid=0` confirme que l'opération était faite en root — et AppArmor l'a quand même refusée.
 
 → Même en uid=0, AppArmor a refusé.
 
@@ -289,6 +289,8 @@ sudo journalctl -k | grep apparmor=\"DENIED\"
 }
 ```
 
+`Cx -> curl_subprofile` signifie : quand `app` exécute `curl`, le sous-process `curl` bascule vers `curl_subprofile`. Cela permet une segmentation fine : `app` a ses règles, `curl` exécuté par `app` a ses propres règles encore plus restrictives.
+
 ### Network rules
 
 ```apparmor
@@ -300,6 +302,8 @@ sudo journalctl -k | grep apparmor=\"DENIED\"
 }
 ```
 
+Les règles `network` contrôlent les appels `socket()` par famille d'adresse et type. `deny network packet` bloque `AF_PACKET` (raw packets ethernet) — même si le process a `CAP_NET_RAW`, le profile AppArmor peut surpasser.
+
 ### Mount, unix sockets, capabilities
 
 ```apparmor
@@ -310,6 +314,8 @@ sudo journalctl -k | grep apparmor=\"DENIED\"
   unix (connect) type=stream addr="@/tmp/mysocket",
 }
 ```
+
+Les règles `capability` dans AppArmor contrôlent l'accès aux capabilities **en plus** du capability set kernel. Les règles `unix` contrôlent l'accès aux sockets Unix domain — utile pour restreindre quelles sockets un service peut contacter.
 
 ## 🧠 Pitfalls
 
@@ -327,7 +333,7 @@ sudo aa-status | grep log-collector
 # → ... (enforce)
 
 # DENIED log sur tentative d'accès interdit
-sudo /usr/local/bin/log-collector --exfil /etc/shadow
+sudo /usr/local/bin/log-collector /etc/shadow
 sudo journalctl -k | tail -5 | grep DENIED
 
 # Profile lisible sans surprise

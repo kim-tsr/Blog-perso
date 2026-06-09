@@ -1,6 +1,6 @@
 import { Metadata } from 'next'
 import ProjectsClient from './ProjectsClient'
-import { getAllProjects, categoryToAccent } from '@/lib/projects'
+import { getAllProjects, categoryToAccent, projectSlug } from '@/lib/projects'
 
 export const metadata: Metadata = {
   title: 'Mes Projets — dev.sec.ops',
@@ -10,6 +10,7 @@ export const metadata: Metadata = {
 export type ProjectStatus = 'live' | 'beta' | 'wip' | 'archive'
 
 export type Project = {
+  slug: string
   title: string
   desc: string
   tags: string[]
@@ -23,6 +24,7 @@ export type Project = {
 export default async function ProjetsPage() {
   const dbProjects = await getAllProjects()
   const projects: Project[] = dbProjects.map(p => ({
+    slug:   projectSlug(p.title),
     title:  p.title,
     desc:   p.description,
     tags:   p.tags,

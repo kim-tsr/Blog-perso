@@ -2,8 +2,8 @@
 title: "Linux #4 — auditd : tracer ce que fait le système"
 slug: linux-04-auditd
 objective: "Activer le framework d'audit Linux, écrire des règles ciblées (file watch, syscall, identité), investiguer avec ausearch/aureport et mapper les events sur MITRE ATT&CK."
-tag: Cybersécurité
-theme: cyan
+tag: Systèmes
+theme: magenta
 difficulty: avancé
 duration: "70 min"
 minRole: pro
@@ -61,50 +61,36 @@ quiz:
 
 ## 🧠 Théorie : auditd est le 4ème pilier
 
-Les 3 couches précédentes de la série :
-1. **systemd hardening** = sandbox déclaratif (lab #1)
-2. **caps + seccomp** = filtrage de syscalls (lab #2)
-3. **AppArmor / MAC** = autorisation obligatoire (lab #3)
+Les 3 couches précédentes de la série construisent une défense **préventive** — elles réduisent ce qu'un attaquant peut faire. Mais aucune n'offre la **traçabilité** : quand un incident se produit (et il se produira), tu as besoin de savoir qui a fait quoi, quand et comment.
 
-`auditd` ajoute la **traçabilité** :
+C'est le rôle d'`auditd` : un framework d'audit **kernel-side** qui capture les événements de sécurité (syscalls, accès fichiers, changements d'identité) à un niveau où aucun attaquant userspace ne peut les éviter ni les altérer.
 
-```
-   Préventif        Détection        Investigation
-   ─────────        ─────────        ──────────────
-                                     
-   systemd hard.    Wazuh / SIEM     auditd logs
-   caps/seccomp     bpftrace         /var/log/audit/audit.log
-   AppArmor MAC                      ausearch / aureport
-   
-   "empêcher"       "voir"           "comprendre après"
-```
+<Pipeline steps={[
+  { label: 'Préventif', hint: 'systemd sandbox · caps drop · seccomp · AppArmor', accent: 'v' },
+  { label: 'Détection', hint: 'Wazuh · bpftrace · SIEM', accent: 'c' },
+  { label: 'Traçabilité', hint: 'auditd → /var/log/audit/audit.log', accent: 's' },
+  { label: 'Investigation', hint: 'ausearch · aureport · MITRE mapping', accent: 'dim' },
+]} caption="auditd est le 4ème pilier : la traçabilité, indispensable pour l'investigation post-incident" />
 
-### Architecture
+### Architecture : kernel → auditd → SIEM
 
-```
-   ┌─────────────────────────────────────────────────┐
-   │                  KERNEL                          │
-   │   ┌─────────────────────────────────────────┐   │
-   │   │   audit subsystem                        │   │
-   │   │   - intercepte syscalls (rules)         │   │
-   │   │   - watches sur inodes                  │   │
-   │   │   - log identité (uid, auid, ses)       │   │
-   │   └────────────────┬────────────────────────┘   │
-   └────────────────────│────────────────────────────┘
-                        │ netlink AUDIT
-                        ▼
-   ┌─────────────────────────────────────────────────┐
-   │  auditd (userspace)                              │
-   │     /var/log/audit/audit.log                     │
-   └────────┬────────────────────────────────────────┘
-            │
-       ┌────┴─────┐
-       ▼          ▼
-   ausearch    audispd → syslog / Wazuh / Loki
-   aureport
-```
+Le subsystem `audit` est intégré au kernel depuis Linux 2.6.6. Il s'interpose dans le chemin d'exécution des syscalls et génère des événements pour chaque accès correspondant à une règle active. Ces événements transitent via un socket netlink vers `auditd` en userspace, qui les écrit dans `/var/log/audit/audit.log`.
+
+<Mermaid chart={`
+flowchart TD
+    A["Process — syscall"] --> B["Kernel audit subsystem\nVérifie les règles actives"]
+    B -- "Règle matchée" --> C["Génère audit record\n(type=SYSCALL + PROCTITLE + PATH)"]
+    B -- "Pas de match" --> D["Syscall exécuté\nsans audit"]
+    C --> E["Netlink socket AUDIT"]
+    E --> F["auditd daemon\n/var/log/audit/audit.log"]
+    F --> G["audispd / plugins"]
+    G --> H1["syslog / journald"]
+    G --> H2["Wazuh / Loki / Elastic"]
+`} caption="Chemin des événements audit : du kernel vers le SIEM via netlink" />
 
 ### Anatomie d'un record audit
+
+Chaque événement audit est un **groupe de records** corrélés par un numéro de séquence (`serial`). Un événement d'accès fichier produit typiquement trois records :
 
 ```
 type=SYSCALL msg=audit(1709488923.123:42): arch=c000003e syscall=2
@@ -118,19 +104,19 @@ type=PATH  msg=audit(1709488923.123:42): item=0 name="/etc/shadow"
 type=PROCTITLE msg=audit(...): proctitle="cat /etc/shadow"
 ```
 
-Champs critiques :
+`type=SYSCALL` est le record principal : il contient le numéro de syscall (`syscall=2` = `openat`), les arguments (`a0`-`a3`), le résultat, et les identités du process. `type=PATH` donne le chemin du fichier accédé avec ses métadonnées FS. `type=PROCTITLE` reconstruit la ligne de commande complète.
 
 | Champ | Sens |
 |---|---|
-| `auid` | login UID (audit identity) — qui s'est CONNECTÉ (pas qui agit) |
-| `uid` | uid effectif courant |
-| `ses` | session login |
-| `comm` | command name (15 chars) |
-| `exe` | binaire complet |
-| `subj` | label MAC (SELinux/AppArmor) |
-| `key` | tag custom de la règle |
+| `auid` | **Audit UID** — qui s'est connecté initialement (ne change pas après su/sudo) |
+| `uid` | UID effectif courant |
+| `ses` | Numéro de session login |
+| `comm` | Nom du process (15 chars max, tronqué) |
+| `exe` | Chemin absolu du binaire exécuté |
+| `subj` | Label MAC (SELinux/AppArmor) |
+| `key` | Tag custom de la règle qui a généré cet event |
 
-> 💡 **L'astuce auid** : un attaquant qui fait `su -` change uid mais pas auid. Tu retrouves toujours QUI s'est connecté à l'origine, même après 5 niveaux de sudo.
+> `auid` est la clé de l'investigation : un attaquant qui fait `su - root` ou enchaîne plusieurs `sudo` change `uid` à chaque étape, mais `auid` reste celui qui s'est connecté via SSH. Tu retrouves toujours l'origine de la session, même après 5 niveaux de sudo.
 
 ## 🎯 Objectif
 
@@ -149,6 +135,8 @@ sudo auditctl -s
 # enabled 1 failure 1 pid 1234 rate_limit 0 backlog_limit 8192 lost 0 ...
 ```
 
+`auditctl -s` interroge le subsystem audit kernel et retourne : `enabled` (1=actif, 2=immutable), `failure` (mode d'action en cas d'erreur : 0=silent, 1=printk, 2=panic), `backlog_limit` (taille du buffer netlink), `lost` (nombre d'events perdus — doit rester à 0).
+
 Config principale `/etc/audit/auditd.conf` (extraits utiles) :
 
 ```
@@ -158,6 +146,8 @@ num_logs = 10              # rotate 10
 disk_full_action = HALT    # CRITIQUE en compliance
 disk_error_action = HALT
 ```
+
+`disk_full_action = HALT` est une exigence de compliance forte (PCI-DSS, SOX) : si les logs ne peuvent plus être écrits, le système **s'arrête** plutôt que de continuer sans tracer. En environnement non-compliance, tu peux mettre `SYSLOG` pour un comportement moins agressif.
 
 ## 📋 Étape 2 — 5 règles ciblées
 
@@ -182,8 +172,10 @@ Crée `/etc/audit/rules.d/dev-sec-ops.rules` :
 -w /etc/sudoers.d/    -p wa -k privesc-sudoers
 
 ## ─── R2 — Modifs SSH (MITRE T1098.004 SSH Authorized Keys)
+## NB: les watches -w ne supportent PAS les globs (/home/*/.ssh ne marche pas).
+## On vise root explicitement ; pour les users, voir la note ci-dessous.
 -w /root/.ssh/authorized_keys -p wa -k ssh-auth-root
--w /home/                     -p wa -k ssh-auth-home
+-w /etc/ssh/sshd_config       -p wa -k ssh-config
 
 ## ─── R3 — Modules kernel (MITRE T1547.006 Kernel Modules)
 -a always,exit -F arch=b64 -S init_module,finit_module,delete_module
@@ -197,14 +189,30 @@ Crée `/etc/audit/rules.d/dev-sec-ops.rules` :
 -a always,exit -F arch=b64 -S execve -F dir=/tmp        -k exec-tmp
 -a always,exit -F arch=b64 -S execve -F dir=/dev/shm    -k exec-shm
 
-## Verrouille la config (ne pas pouvoir vider -D)
+## Verrouille la config (ne peut plus modifier sans REBOOT)
 -e 2
 ```
+
+Les règles `-w` (watch) utilisent des **inode watches** kernel : dès qu'un accès est fait sur cet inode (quelle que soit la méthode), l'event est généré. `-p wa` signifie : watcher les permissions `write` et `attribute change`. `-k tag` associe un tag arbitraire.
+
+> ⚠️ Un watch `-w` ne supporte **pas** les wildcards : `-w /home/*/.ssh/authorized_keys` ne matche rien. Pour couvrir tous les users, génère une ligne par compte au boot — ex. dans le `.rules` via un script qui itère sur `/home/*` :
+> ```bash
+> for d in /home/*; do
+>   auditctl -w "$d/.ssh/authorized_keys" -p wa -k ssh-auth-user
+> done
+> ```
+> L'alternative scalable est une **règle syscall** large sur `openat` filtrée côté SIEM par nom de fichier (`name=authorized_keys`), au prix de plus de bruit à corréler.
+
+Les règles `-a always,exit` sont des règles de syscall : elles s'appliquent à chaque `exit` du syscall spécifié. `-F arch=b64` filtre sur l'ABI 64-bit (sans cela, tu rates les appels 32-bit sur un kernel 64-bit). `-F auid>=1000` filtre sur les utilisateurs normaux (UIDs ≥ 1000, donc pas les comptes système). `-F auid!=4294967295` exclut les processes sans login session (`4294967295` = `(unsigned)-1` = la valeur `unset` de l'auid, souvent notée `-1` ou `4294967295` dans les logs).
+
+> 💡 `-F dir=/tmp` filtre sur le **préfixe du chemin** de l'objet manipulé par le syscall (ici l'exécutable d'`execve`) : tout objet sous `/tmp/...` matche. À distinguer de `-F path=/tmp/x` qui n'observe qu'un fichier précis (via inode watch). Risque si tu confonds : `path=` sur un fichier inexistant ne matche jamais ; `dir=` couvre toute l'arborescence. Note aussi que `comm` est tronqué à 15 caractères dans chaque record — pour l'attribution fiable, base-toi sur `exe=` (chemin complet) et non `comm=`.
 
 ```bash
 sudo augenrules --load
 sudo auditctl -l
 ```
+
+`augenrules --load` compile tous les fichiers `*.rules` de `/etc/audit/rules.d/` et les charge atomiquement. `auditctl -l` vérifie les règles actives dans le kernel.
 
 > ⚠️ Le `-e 2` à la fin verrouille le système d'audit — tu ne peux plus modifier les règles sans REBOOT. Très bon en prod, pénible en lab. Mets `-e 1` pendant les tests.
 
@@ -218,12 +226,16 @@ sudo ausearch -k persistence-passwd -ts recent
 # → SYSCALL openat sur /etc/passwd, write, par useradd
 ```
 
+`useradd` appelle `openat(/etc/passwd, O_WRONLY|O_CREAT|...)` et `write()` — la watch `-w /etc/passwd -p wa` génère un event. `ausearch -k persistence-passwd -ts recent` filtre sur le tag et les 10 dernières minutes.
+
 ### R3 — Charger un module
 
 ```bash
 sudo modprobe overlay   # déjà chargé sans doute, mais OK
 sudo ausearch -k kernel-module -ts recent
 ```
+
+`modprobe` appelle `finit_module()` — la règle `-S init_module,finit_module,delete_module` capture cet appel. C'est une règle critique : le chargement d'un module kernel est une technique de persistance furtive (rootkit, keylogger kernel).
 
 ### R4 — Élévation manuelle
 
@@ -241,6 +253,8 @@ sudo chmod 4755 /tmp/elev
 sudo ausearch -k id-escalation -ts recent
 ```
 
+Le binaire `setuid` appelle `setuid(0)` en UID utilisateur — la règle `-S setuid -F auid>=1000` capture ce pattern d'escalade de privilèges. En plus, l'exécution depuis `/tmp` déclenche R5.
+
 ### R5 — Exec depuis /tmp
 
 ```bash
@@ -251,6 +265,8 @@ chmod +x /tmp/p.sh
 sudo ausearch -k exec-tmp -ts recent
 # → SYSCALL execve, name=/tmp/p.sh, comm="p.sh"
 ```
+
+`execve()` depuis `/tmp` ou `/dev/shm` est un pattern d'exécution malveillante classique : l'attaquant upload un script et l'exécute depuis un répertoire monde-inscriptible. Cette règle capture systématiquement ce pattern.
 
 ## 📋 Étape 4 — Investigation avec ausearch / aureport
 
@@ -265,6 +281,8 @@ sudo ausearch -k persistence-passwd
 ```bash
 sudo ausearch -ua 1000 --start today
 ```
+
+`-ua 1000` filtre sur l'`auid` (audit UID de connexion) — même si l'utilisateur a fait `sudo su -`, son `auid` reste 1000. C'est la puissance du champ `auid` vs `uid` pour l'attribution.
 
 ### Recherche par fichier touché
 
@@ -281,11 +299,15 @@ sudo aureport --file          # accès fichiers les + chauds
 sudo aureport --executable    # binaires exécutés
 ```
 
+`aureport` est le compagnon d'`ausearch` pour les vues agrégées. `--auth` montre toutes les tentatives d'authentification (SSH, sudo, PAM) — utile pour détecter un brute-force. `--executable` liste tous les binaires exécutés sur la machine — utile pour détecter un binaire inconnu.
+
 ### Format JSON pour SIEM
 
 ```bash
 sudo ausearch -k id-escalation --format json | jq
 ```
+
+Le format JSON d'`ausearch` (disponible depuis audit-userspace 3.0, présent sur Debian 12 / Ubuntu 22.04+) facilite l'ingestion dans un SIEM. Chaque event devient un objet JSON avec tous les champs structurés — prêt pour Elastic, Loki ou Wazuh. Sur une version plus ancienne, utilise `ausearch --format csv` ou le plugin `au-remote`.
 
 ## 📋 Étape 5 — Forward vers SIEM (Wazuh / Loki / syslog)
 
@@ -300,17 +322,25 @@ args = LOG_INFO
 format = string
 ```
 
-→ tous les events partent en syslog → ingestion par rsyslog/journald → forward Loki / Wazuh.
-
-Pour Wazuh : le manager a déjà des décodeurs pour `type=SYSCALL` et `type=USER_AUTH`. Tu obtiens des règles 80790 et amis qui trigerent automatiquement.
+Le plugin `syslog` (via `audispd`) relaie chaque event vers syslog. De là, `rsyslog` ou `journald` peuvent les forward vers Loki, Wazuh ou Elastic. Pour Wazuh : le manager a déjà des décodeurs pour `type=SYSCALL` et `type=USER_AUTH`. Tu obtiens des règles 80790 et amis qui trigerent automatiquement.
 
 ## 📋 Étape 6 — Mapping MITRE pour ton SOC
+
+<Mermaid chart={`
+flowchart LR
+    R1a["persistence-passwd\n/etc/passwd write"] --> T1136["T1136 Create Account\nPersistence"]
+    R1b["privesc-sudoers\n/etc/sudoers write"] --> T1548a["T1548.003 Sudo/Sudoers\nPriv Escalation"]
+    R2["ssh-auth-*\nSSH keys modif"] --> T1098["T1098.004 SSH Keys\nPersistence"]
+    R3["kernel-module\nfinit_module syscall"] --> T1547["T1547.006 Kernel Module\nPersistence"]
+    R4["id-escalation\nsetuid par user normal"] --> T1548b["T1548 Elevation Abuse\nPriv Escalation"]
+    R5["exec-tmp\nexecve depuis /tmp"] --> T1059["T1059 Command Execution\nExecution"]
+`} caption="Mapping des règles audit (R1–R5 du fichier .rules) sur les tactiques MITRE ATT&CK — chaque règle cible une TTP précise" />
 
 | Règle | TTP MITRE | Tactique | Réponse type |
 |---|---|---|---|
 | `persistence-passwd/shadow` | T1136 Create Account | Persistence | Vérifier diff /etc/passwd, alerter SOC |
 | `privesc-sudoers` | T1548.003 Sudo Caching | Priv Escalation | Diff /etc/sudoers.d/, rollback git |
-| `ssh-auth-root/home` | T1098.004 SSH Keys | Persistence | Vérifier clé, identifier owner, révoquer |
+| `ssh-auth-root/user` + `ssh-config` | T1098.004 SSH Keys | Persistence | Vérifier clé/config, identifier owner, révoquer |
 | `kernel-module` | T1547.006 Kernel Modules | Persistence | rkhunter, chkrootkit, IR mode |
 | `id-escalation` | T1548 Abuse Elevation | Priv Escalation | corréler avec exec-tmp pour pattern complet |
 | `exec-tmp/shm` | T1059 Command Execution | Execution | quarantine /tmp, image bootkit ? |
@@ -333,11 +363,11 @@ sudo auditctl -l | wc -l    # ≥ nombre de règles dans rules.d
 sudo auditctl -s | grep lost
 # lost 0
 
-# 3. Chaque test → event correspondant
-sudo ausearch -k persistence-passwd -ts recent | wc -l > 0
+# 3. Chaque test → event correspondant (doit retourner > 0)
+sudo ausearch -k persistence-passwd -ts recent | grep -c 'type=SYSCALL'
 
-# 4. Format JSON exploitable
-sudo ausearch --format json --start today | jq '.[0]' | head
+# 4. Format JSON exploitable (un objet par event)
+sudo ausearch -k id-escalation --format json | jq '.[0]' | head
 ```
 
 ## 🚀 Pour aller plus loin

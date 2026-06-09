@@ -8,7 +8,7 @@ const CARDS = [
     num: '01',
     code: '// labs',
     title: 'Labs',
-    desc: 'Tutoriels pratiques avec théorie, code et quiz — infrastructure, sécurité, réseau.',
+    desc: 'Tutoriels pratiques avec théorie, code et quiz — infrastructure, sécurité, réseau, systèmes.',
     href: '/labs',
     accent: 'var(--v)',
     border: 'oklch(0.68 0.24 280/.5)',

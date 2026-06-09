@@ -2,8 +2,8 @@
 title: "Linux #2 — Capabilities et seccomp"
 slug: linux-02-capabilities-seccomp
 objective: "Démonter root en morceaux avec les capabilities (CAP_*), écrire un filtre seccomp BPF à la main pour bloquer des syscalls dangereux, puis appliquer ces techniques à un binaire C de test."
-tag: Cybersécurité
-theme: cyan
+tag: Systèmes
+theme: magenta
 difficulty: avancé
 duration: "70 min"
 minRole: pro
@@ -61,47 +61,36 @@ quiz:
 
 ## 🧠 Théorie : root, c'est plein de pouvoirs distincts
 
-Avant Linux 2.2, root = bit suid set = TOUS les privilèges :
+Avant Linux 2.2, la sécurité Unix reposait sur une dichotomie brutale : soit tu es root (UID 0) et tu peux tout faire, soit tu ne l'es pas. Cette architecture monolithique signifiait que n'importe quel binaire nécessitant le moindre privilège élevé devait être **setuid root** — ce qui donnait l'ensemble complet des pouvoirs de root en cas de compromission.
 
-- lire `/etc/shadow`
-- modifier l'horloge système
-- charger un module kernel
-- bind sur port < 1024
-- ouvrir un raw socket
-- changer son hostname
-- monter un FS
-- ptrace n'importe quel process
-- … et 30 autres
+Le problème était flagrant avec des outils comme `ping` : pour envoyer un ICMP raw packet, il faut ouvrir une raw socket — ce qui nécessite root. Avant les capabilities, `ping` était donc setuid root. Un bug dans `ping` donnait donc un accès root complet à la machine.
 
-Les **capabilities** découpent ça :
+Les **capabilities** (Linux 2.2, 1999) découpent ce pouvoir monolithique en ~40 unités indépendantes. Chaque capability représente une famille de syscalls privilégiés. Ping n'a besoin que de `CAP_NET_RAW` — et c'est tout ce qu'on lui donne. Un bug dans ping devient alors un bug limité aux raw sockets.
 
-```
-   AVANT (UID 0 monolithique)        APRÈS (capabilities granulaires)
-   ───────────────────────────       ───────────────────────────────
-   
-         ┌─────────┐                    ┌──────────────────┐
-         │  root   │                    │ CAP_NET_RAW      │
-         │  ALL    │                    │ CAP_NET_ADMIN    │
-         │ POWERS  │       ──►          │ CAP_SYS_ADMIN    │
-         │         │                    │ CAP_DAC_OVERRIDE │
-         │  💀     │                    │ ... (40 caps)    │
-         └─────────┘                    └──────────────────┘
-   1 bug = jeu over          1 bug = limité au pouvoir octroyé
-```
+<Stack layers={[
+  { label: 'Userspace process', accent: 'v' },
+  { label: 'Capability check (kernel)', hint: 'CAP_NET_RAW · CAP_SYS_ADMIN · CAP_DAC_OVERRIDE…', accent: 'c' },
+  { label: 'Seccomp BPF filter', hint: 'Vérifié avant chaque syscall entrant', accent: 's' },
+  { label: 'Kernel — Syscall handler', accent: 'dim' },
+]} bottom="last" caption="Deux couches de contrôle indépendantes : capabilities (qui peut quoi) + seccomp (quels syscalls sont autorisés)" />
 
 ### Capabilities qui font le plus mal
 
 | Cap | Ce qu'elle permet | Risque |
 |---|---|---|
-| `CAP_SYS_ADMIN` | "Le nouveau root" : mount, swap, namespaces, BPF | 🚨 = root |
-| `CAP_SYS_PTRACE` | ptrace n'importe quel process | Vol de secrets |
+| `CAP_SYS_ADMIN` | mount, swap, namespaces, BPF, sethostname… | = root effectif |
+| `CAP_SYS_PTRACE` | ptrace n'importe quel process | Vol de secrets mémoire |
 | `CAP_SYS_MODULE` | Charge modules kernel | Code kernel arbitraire |
-| `CAP_NET_RAW` | Raw sockets | Spoofing, sniffing |
-| `CAP_DAC_OVERRIDE` | Ignore les permissions FS | Lit tout |
-| `CAP_DAC_READ_SEARCH` | Lit/parcourt tout | Lit /etc/shadow |
-| `CAP_SETUID/CAP_SETGID` | Change d'identité | Évasion |
+| `CAP_NET_RAW` | Raw sockets, ICMP | Spoofing, sniffing réseau |
+| `CAP_DAC_OVERRIDE` | Ignore les permissions FS | Lit/écrit n'importe quel fichier |
+| `CAP_DAC_READ_SEARCH` | Lit/parcourt tout le FS | Lit /etc/shadow |
+| `CAP_SETUID/CAP_SETGID` | Change d'identité | Évasion vers root |
+
+`CAP_SYS_ADMIN` mérite une attention particulière : elle regroupe tellement de syscalls divers qu'elle est souvent appelée "le nouveau root". Si un binaire a besoin de `CAP_SYS_ADMIN`, c'est un signal fort qu'il faut repenser l'architecture.
 
 ### Le modèle à 3 jeux (Effective / Permitted / Inheritable)
+
+Chaque process Linux maintient quatre ensembles de capabilities :
 
 ```
    Process X
@@ -111,33 +100,41 @@ Les **capabilities** découpent ça :
    └── Bounding   : { CAP_NET_BIND_SERVICE, CAP_NET_RAW, ... } ← plafond max
 ```
 
-Après `exec`, le kernel applique la formule :
+**Permitted** est le stock maximal — un process ne peut avoir en Effective que ce qu'il a en Permitted. **Effective** contient les capabilities actuellement actives (utilisées pour les vérifications kernel). Un process peut activer/désactiver des caps entre Permitted et Effective. **Inheritable** détermine ce qui se transmet aux enfants après `exec()`. **Bounding** est le plafond absolu : même root ne peut avoir une capability si elle est absente du bounding set.
+
+Après `execve()`, le kernel recalcule les jeux du nouveau process (notation de `capabilities(7)` : `P` = jeu courant, `F` = file capabilities du binaire, `'` = après exec) :
 
 ```
-   new_P = (P & inheritable_file) | (file_P & bounding)
-   new_E = file_E ? new_P : ambient
+   P'(permitted) = (P(inheritable) & F(inheritable))
+                 | (F(permitted) & P(bounding))
+                 | P'(ambient)
+   P'(effective) = F(effective) ? P'(permitted) : P'(ambient)
 ```
 
-→ d'où l'introduction des **Ambient capabilities** (Linux 4.3) pour simplifier : "ce que je garde au exec sans toucher au file binary".
+Autrement dit : une cap survit à l'exec soit parce qu'elle est inscrite dans le binaire (file caps), soit parce qu'elle est portée par l'ambient set. Le bounding set agit comme un plafond qui rabote tout le reste.
 
-### Seccomp en 1 schéma
+Les **Ambient capabilities** (Linux 4.3) simplifient ce mécanisme : elles permettent de passer des capabilities aux enfants sans poser de file capabilities sur chaque binaire exécuté. C'est exactement ce que fait `AmbientCapabilities=` dans systemd (cf. pitfall du lab #1 sur le bind port < 1024) : la cap est injectée dans l'ambient set avant `execve()`, donc présente en Effective sans setcap ni setuid.
 
-```
-   userspace syscall
-        │
-        ▼
-   ┌─────────────┐    autorisé ?
-   │  seccomp    │ ──────────────► continue vers le kernel
-   │   BPF       │                          │
-   │  filter     │ ──────────────► refus    │
-   └─────────────┘   (KILL, ERRNO,         ▼
-                      LOG, TRAP)       handler kernel
-   
-   Le filtre est :
-   - installé une fois (irrévocable)
-   - exécuté pour CHAQUE syscall
-   - peut lire le numéro de syscall ET les args
-```
+### Seccomp : de la théorie au BPF
+
+Seccomp (Secure Computing mode) est un mécanisme kernel qui s'interpose sur chaque appel système émis par un process. Le filtre est un **programme BPF** — un bytecode exécuté dans une VM vérifiée du kernel. À chaque syscall, ce programme reçoit le contexte (numéro de syscall + arguments) et retourne une décision :
+
+<Mermaid chart={`
+stateDiagram-v2
+    [*] --> UserspaceSyscall: process appelle un syscall
+    UserspaceSyscall --> SeccompBPF: kernel intercepte
+    SeccompBPF --> ALLOW: SCMP_ACT_ALLOW
+    SeccompBPF --> ERRNO: SCMP_ACT_ERRNO(EPERM)
+    SeccompBPF --> KILL: SCMP_ACT_KILL
+    SeccompBPF --> LOG: SCMP_ACT_LOG
+    SeccompBPF --> TRAP: SCMP_ACT_TRAP
+    ALLOW --> KernelHandler: syscall exécuté normalement
+    ERRNO --> Userspace: retourne -1 errno
+    KILL --> Userspace: SIGSYS — process tué
+    LOG --> KernelHandler: autorisé + loggué
+`} caption="Décisions possibles d'un filtre seccomp BPF : ALLOW, ERRNO, KILL, LOG, TRAP" />
+
+Le filtre est installé via `prctl(PR_SET_SECCOMP, SECCOMP_MODE_FILTER, ...)` ou le syscall `seccomp()`. Une fois installé, il est **irrévocable** — un process ne peut pas enlever son propre filtre, seulement en ajouter de nouveaux (plus restrictifs).
 
 ## 🎯 Objectif
 
@@ -158,6 +155,8 @@ grep Cap /proc/$(pidof sshd | awk '{print $1}')/status
 # Décodeur humain
 capsh --decode=$(grep CapEff /proc/1/status | awk '{print $2}')
 ```
+
+`/proc/<pid>/status` expose les quatre ensembles de capabilities sous forme de bitmasks hexadécimaux. `capsh --decode=` les traduit en noms humains (`cap_net_admin`, `cap_sys_admin`, etc.). Chaque bit du masque correspond à une capability — le bit 0 est `CAP_CHOWN`, le bit 7 est `CAP_SETUID`, etc.
 
 ## 📋 Étape 2 — Donner CAP_NET_BIND_SERVICE à un binaire sans setuid
 
@@ -185,12 +184,18 @@ int main() {
 EOF
 gcc miniweb.c -o miniweb
 ./miniweb     # → bind: Permission denied
+```
 
+Sans `CAP_NET_BIND_SERVICE`, le kernel refuse l'appel `bind()` sur un port < 1024 pour un process non-root. Ce contrôle est vérifié dans `net/ipv4/af_inet.c` — le kernel consulte l'Effective capability set avant d'autoriser le bind.
+
+```bash
 # Donne juste cap_net_bind_service (en effective + permitted)
 sudo setcap 'cap_net_bind_service=+ep' ./miniweb
 
 ./miniweb     # → listening on :443 — uid=1000  ✓
 ```
+
+`setcap 'cap_net_bind_service=+ep'` stocke les file capabilities dans un xattr `security.capability` sur l'inode du binaire. `+ep` signifie : ajouter dans Permitted (`p`) et Effective (`e`). Au prochain `execve()` de ce binaire, le kernel applique la formule d'héritage et positionne cette cap dans le jeu Effective du nouveau process.
 
 Le binaire tourne **uid=1000**, jamais root, mais peut quand même bind sur 443. C'est de la **délégation chirurgicale**.
 
@@ -208,6 +213,8 @@ docker run --rm --cap-drop=ALL --cap-add=CAP_NET_BIND_SERVICE \
   alpine sh -c 'capsh --print'
 ```
 
+`--cap-drop=ALL` positionne le bounding set à zéro — le container n'a aucune capability, même s'il tourne en root UID 0. `--cap-add=CAP_NET_BIND_SERVICE` réintroduit uniquement celle nécessaire.
+
 **Règle d'or container** : `--cap-drop=ALL --cap-add=...` ce dont tu as besoin. Jamais `--privileged`.
 
 ## 📋 Étape 4 — Premier filtre seccomp en C (libseccomp)
@@ -217,8 +224,8 @@ docker run --rm --cap-drop=ALL --cap-add=CAP_NET_BIND_SERVICE \
 #include <stdio.h>
 #include <stdlib.h>
 #include <sys/prctl.h>
-#include <linux/prctl.h>
 #include <seccomp.h>
+#include <errno.h>     // EPERM (étape 5)
 
 int main() {
     // 1. no_new_privs (prérequis pour user normal)
@@ -243,6 +250,10 @@ int main() {
     return 0;
 }
 ```
+
+`prctl(PR_SET_NO_NEW_PRIVS, 1, ...)` est le premier appel obligatoire : il pose le flag `no_new_privs` sur le process et tous ses descendants. Sans ce flag, le kernel refuse l'installation d'un filtre seccomp par un process non-root (pour éviter qu'un attaquant pose un filtre malveillant qui court-circuite des vérifications de sécurité).
+
+`seccomp_init(SCMP_ACT_KILL)` initialise le filtre en mode "deny by default" — tout syscall non explicitement autorisé enverra `SIGSYS` au process. `SCMP_SYS(brk)` est nécessaire car `malloc()` l'utilise pour agrandir le heap. `rt_sigreturn` est le syscall de retour depuis un handler de signal — sans lui, les signaux ne pourraient pas être gérés.
 
 ```bash
 sudo apt install libseccomp-dev
@@ -269,6 +280,8 @@ seccomp_rule_add(ctx, SCMP_ACT_ERRNO(EPERM), SCMP_SYS(kexec_load), 0);
 seccomp_load(ctx);
 ```
 
+`SCMP_ACT_ALLOW` en mode défaut autorise tous les syscalls sauf ceux explicitement bloqués (denylist). `SCMP_ACT_ERRNO(EPERM)` retourne `-1 EPERM` au lieu de tuer le process. `ptrace` est bloqué pour empêcher l'injection de code dans le process. `mount`/`unshare`/`setns` bloquent la manipulation de namespaces. `kexec_load` est le syscall qui permettrait de remplacer le kernel — clairement hors de portée d'un service applicatif.
+
 → ton service ne meurt pas, mais ces syscalls retournent `-1 EPERM`. Idéal pour neutraliser une famille de techniques sans casser le binaire.
 
 ## 📋 Étape 6 — Conditions sur les arguments
@@ -284,21 +297,29 @@ seccomp_rule_add(ctx, SCMP_ACT_ALLOW, SCMP_SYS(socket), 1,
 // Le reste (AF_NETLINK, AF_PACKET, AF_UNIX, AF_BLUETOOTH...) → tombe au filtre
 ```
 
-C'est ce que fait runc/Docker pour le profile seccomp par défaut.
+`SCMP_A0(SCMP_CMP_EQ, AF_INET)` inspecte le premier argument (`A0`) du syscall `socket()` et vérifie qu'il est égal à `AF_INET` (2). Le programme BPF généré par libseccomp fait exactement ce que ferait un programme C : charge la valeur de l'argument depuis la structure `seccomp_data`, la compare, et branche. C'est ce que fait runc/Docker pour le profile seccomp par défaut.
 
 ## 📋 Étape 7 — Inspecter les syscalls réellement utilisés
 
 ```bash
-# strace : voir tous les syscalls d'un process
-strace -c ./monapp 2>&1 | tail -30
+# strace : voir tous les syscalls d'un process ET de ses enfants (-f)
+strace -f -c ./monapp 2>&1 | tail -30
 # → tableau "% time / calls / syscall" → liste exacte à autoriser
 
-# bpftrace : monitoring kernel-side
-bpftrace -e 'tracepoint:syscalls:sys_enter_* / pid == 1234 /
-            { @[probe] = count(); }'
+# Extraire juste la liste des noms de syscalls (prête à coller dans le filtre)
+strace -f -c -e trace=all ./monapp 2>&1 \
+  | awk 'NR>2 && $NF!="" {print $NF}' | sort -u
+
+# bpftrace : monitoring kernel-side, sans l'overhead ptrace
+bpftrace -e 'tracepoint:raw_syscalls:sys_enter / pid == 1234 /
+            { @[args.id] = count(); }'
 ```
 
-Méthodologie : run l'app en mode allow-all avec un compteur, capture la liste, basculer en deny-default avec cette liste autorisée.
+`strace -c` (summarize) accumule les statistiques de tous les syscalls appelés durant la vie du process : compte, durée totale, pourcentage du temps. Le `-f` est **essentiel** : sans lui tu rates les syscalls des threads et process enfants (un serveur qui fork des workers passera presque tous ses syscalls dans les enfants). `bpftrace` fait la même mesure côté kernel sans l'overhead de ptrace — préférable en production où strace ralentit trop la cible.
+
+> ⚠️ Une allowlist construite sur un seul run est **incomplète** : un code path rare (gestion d'erreur, rotation de log, signal) appelle des syscalls que tu n'as pas vus. Capture sur un workload représentatif et long, puis démarre en `SCMP_ACT_LOG` (loggue sans bloquer) avant de passer en `KILL`/`ERRNO`. C'est l'équivalent du complain mode AppArmor du lab #3.
+
+Méthodologie : run l'app en mode `SCMP_ACT_LOG` (autorise + loggue tout via `dmesg`/auditd), capture la liste réelle, puis bascule en deny-default avec cette allowlist.
 
 ## 🧠 Pitfalls
 
@@ -310,10 +331,10 @@ Méthodologie : run l'app en mode allow-all avec un compteur, capture la liste, 
 
 ## ✅ Validation
 
-- `getcap /usr/bin/miniweb` montre `cap_net_bind_service+ep`
+- `getcap ./miniweb` montre `cap_net_bind_service=ep` (le binaire de l'étape 2)
 - Le binaire tourne en uid=1000 et bind 443
 - `./safe_app` avec execve commenté → "hello safe world", sinon SIGSYS
-- `strace -e trace=ptrace ./hardened_app` → return -1 EPERM (bloqué par filtre)
+- Sur l'app à filtre ERRNO (étape 5), `strace -e trace=ptrace ./app_errno` montre `ptrace(...) = -1 EPERM` (bloqué par le filtre, sans tuer le process)
 
 ## 🚀 Pour aller plus loin
 

@@ -32,14 +32,14 @@ quiz:
       - "Les logs normalisés sont plus rapides"
     correct: 1
     explanation: "ECS (Elastic Common Schema) : champs standards user.name, source.ip, event.action. Avant : 12 façons d'écrire 'login failed' selon la source. Après : une règle 'event.action=login AND event.outcome=failure' couvre tout. C'est la différence entre un parser SIEM mature et un grep glorifié."
-  - question: "Quelle est la différence entre une règle 'atomic' (ex: Wazuh 5712) et une règle 'composite' (ex: 5710) ?"
+  - question: "Quelle est la différence entre une règle 'atomic' (ex: Wazuh 5716) et une règle 'composite' (ex: 5712) ?"
     options:
       - "Atomic est plus rapide"
       - "Atomic = matche UN événement individuel ('un login a échoué'). Composite = corrèle plusieurs événements dans une fenêtre temporelle ('8 logins échoués en 2 minutes depuis la même IP')"
       - "Atomic est obsolète"
       - "Composite ne fonctionne qu'avec ML"
     correct: 1
-    explanation: "Atomic est utile pour le contexte (audit trail) mais bruyant si on alerte dessus. Composite (corrélation) extrait le SIGNAL : 1 fail = bénin, 100 fails = brute force. Wazuh utilise des règles enfant (`if_matched_sid`) pour la corrélation."
+    explanation: "Atomic est utile pour le contexte (audit trail) mais bruyant si on alerte dessus. Composite (corrélation) extrait le SIGNAL : 1 fail = bénin, 100 fails = brute force. Dans le ruleset officiel, 5716 est atomique ('sshd: authentication failed', level 5) et 5712 est composite ('sshd brute force', level 10, `if_matched_sid` sur 5710/5716 avec frequency + same_source_ip)."
   - question: "À quoi sert le mapping MITRE ATT&CK dans une règle SIEM ?"
     options:
       - "À faire joli dans le dashboard"
@@ -60,31 +60,43 @@ quiz:
 
 ## 🧠 Théorie : qu'est-ce qu'un SIEM ?
 
-```
-   Sources hétérogènes        Pipeline SIEM              Sortie
-   ────────────────────       ─────────────              ──────
-   
-   sshd auth.log     ┐                                
-   nginx access      │      ┌─────────┐               
-   firewall iptables ├────► │ Collect │ ───┐          
-   Windows EventLog  │      └─────────┘    │          
-   k8s audit log     │                     ▼          
-   AWS CloudTrail    │             ┌──────────────┐   
-   EDR (osquery)     ┘             │  Normalize   │   
-                                   │  (ECS/wazuh) │   
-                                   └──────┬───────┘   
-                                          ▼          
-                                   ┌──────────────┐   
-                                   │   Correlate  │ ─► Règles
-                                   │  (rules eng) │    composites
-                                   └──────┬───────┘   
-                                          ▼          
-                                   ┌──────────────┐   
-                                   │    Alert     │ ─► SOC
-                                   │    Store     │    Slack/email
-                                   │    Search    │    Tableau de bord
-                                   └──────────────┘   
-```
+Un SIEM (Security Information and Event Management) est l'organe central de visibilité d'un SOC (Security Operations Center). Son rôle n'est pas de bloquer les attaques — c'est de les **voir, les corréler et les alerter**. La distinction est fondamentale : un firewall bloque, un IPS bloque, un EDR bloque ; le SIEM, lui, observe. C'est ce qui lui permet d'avoir une vision globale cross-source qu'aucun outil de blocage ne peut avoir seul.
+
+La valeur d'un SIEM est dans sa capacité à corréler des événements qui, pris individuellement, sont anodins. Un seul login échoué sur SSH : log d'audit, rien d'alarmant. Huit logins échoués en 2 minutes depuis la même IP sur 3 serveurs différents : brute force coordonné. Cette **corrélation temporelle et multi-source** est ce qui distingue le SIEM d'un simple agrégateur de logs.
+
+### Architecture Wazuh et pipeline d'ingestion
+
+Wazuh est un SIEM open-source construit sur trois composants qui correspondent aux trois phases du pipeline SIEM :
+
+<Mermaid chart={`
+flowchart LR
+    subgraph sources["Sources hétérogènes"]
+        ssh[sshd auth.log]
+        nginx[nginx access]
+        fw[iptables / firewall]
+        win[Windows EventLog]
+        k8s[k8s audit log]
+    end
+    subgraph agent["wazuh-agent (host)"]
+        collect[Collect & tail]
+        preproc[Pré-decode]
+    end
+    subgraph manager["wazuh-manager"]
+        decode[Decoders XML]
+        rules[Rules Engine]
+        alert[Alert store]
+    end
+    subgraph output["Sortie"]
+        indexer[(wazuh-indexer / OpenSearch)]
+        dashboard[wazuh-dashboard]
+        soc[SOC / Slack]
+    end
+    sources --> agent
+    agent --> manager
+    decode --> rules
+    rules --> alert
+    manager --> output
+`} caption="Pipeline Wazuh : collecte → décodage → corrélation → alerte" />
 
 ### Composants Wazuh
 
@@ -92,9 +104,32 @@ quiz:
 |---|---|
 | **wazuh-manager** | Reçoit les events, décode, applique les règles, déclenche les alertes |
 | **wazuh-indexer** | Stockage des events (OpenSearch fork) |
-| **wazuh-dashboard** | UI (Kibana fork) |
+| **wazuh-dashboard** | UI web (fork d'OpenSearch Dashboards, lui-même fork de Kibana 7.10) |
 | **wazuh-agent** | Sur chaque host, collecte logs + FIM + scans + active-response |
 | **rulesets** | XML déclaratifs versionnés (rules + decoders + CDB lists) |
+
+### Architecture agent vs agentless
+
+Wazuh supporte deux modes de collecte. En mode **agent** (recommandé), un processus léger tourne sur chaque host cible : il surveille les fichiers de logs en temps réel (`tail -F` en équivalent), exécute des checks d'intégrité (FIM), des scans de vulnérabilité, et remonte les données compressées et chiffrées vers le manager via TCP 1514. L'agent a une empreinte mémoire faible (~50-100 Mo) et est conçu pour ne pas impacter les performances du host.
+
+En mode **agentless**, le manager se connecte lui-même au host (via SSH, WMI, ou API) pour collecter les données. Utile pour les équipements réseau (routeurs, switches) ou les hosts où on ne peut pas installer de binaire, mais moins riche en capabilities (pas de FIM en temps réel, pas d'active-response).
+
+### Pipeline décoders → règles dans Wazuh
+
+Le mécanisme de détection de Wazuh est un pipeline en deux étapes. Les **décoders** (fichiers XML dans `/var/ossec/ruleset/decoders/`) transforment les logs bruts en champs structurés. Les **règles** (fichiers XML dans `/var/ossec/ruleset/rules/`) opèrent ensuite sur ces champs. Cette séparation est clé : les décoders normalisent le format (ce log SSH a un `srcip`, un `dstuser`, un `action`), les règles définissent la sémantique (8 `action=fail` en 2 min = brute force).
+
+```
+   Log brut : "Failed password for invalid user admin from 1.2.3.4 port 52341 ssh2"
+         │
+         ▼  Decoder sshd (0095-sshd_decoders.xml)
+   Fields : {srcip: "1.2.3.4", dstuser: "admin", action: "failed_login"}
+         │
+         ▼  Rule 5710 (atomic) — "invalid user"
+   Alert level 5 : "sshd: Attempt to login using a non-existent user" → loggé, pas alerté
+         │
+         ▼  Rule 5712 (composite, if_matched_sid 5710, 8x en 120s même IP)
+   Alert level 10 : "sshd: brute force trying to get access" → SOC alerté
+```
 
 ### Différence SIEM vs EDR vs XDR
 
@@ -105,6 +140,8 @@ quiz:
    SOAR   : automatise les réponses (orchestration)          — Splunk SOAR, Tines, Shuffle
 ```
 
+Un SIEM sans EDR voit les logs mais pas les processus. Un EDR sans SIEM voit l'endpoint mais pas les corrélations cross-host. L'état de l'art est XDR (les deux + network), mais un SIEM bien configuré donne déjà 80% de la valeur pour 20% du coût.
+
 ## 🎯 Objectif
 
 Installer une stack **Wazuh** complète, brancher un agent sur une seconde machine, déclencher une détection (brute-force SSH) et investiguer dans Wazuh Dashboard.
@@ -114,13 +151,19 @@ Installer une stack **Wazuh** complète, brancher un agent sur une seconde machi
 Sur la VM **manager** :
 
 ```bash
-git clone https://github.com/wazuh/wazuh-docker.git -b v4.7.5
+# Adaptez le tag à la dernière version stable (ex : v4.14.0).
+# Vérifiez les tags disponibles : git ls-remote --tags https://github.com/wazuh/wazuh-docker.git
+git clone https://github.com/wazuh/wazuh-docker.git -b v4.14.0
 cd wazuh-docker/single-node
 docker compose -f generate-indexer-certs.yml run --rm generator
 docker compose up -d
 ```
 
-Patientez ~3 minutes que tous les conteneurs soient `healthy`. Accédez à `https://<ip-manager>` (admin / SecretPassword).
+La première commande (`generate-indexer-certs.yml`) génère les certificats TLS nécessaires aux communications inter-composants Wazuh. Wazuh utilise du TLS mutuel entre le manager, l'indexer et le dashboard — sans cette étape, l'indexer refuserait les connexions. `docker compose up -d` lance les trois conteneurs en arrière-plan. Le démarrage prend 2-3 minutes le temps qu'OpenSearch (le moteur de l'indexer) s'initialise et que les health checks passent.
+
+> ⚠️ Prérequis système souvent oublié : OpenSearch exige `vm.max_map_count` élevé. Sur l'hôte Docker : `sudo sysctl -w vm.max_map_count=262144` (persistez-le dans `/etc/sysctl.conf`). Sinon l'indexer crashe au boot avec `max virtual memory areas vm.max_map_count [65530] is too low`.
+
+Patientez ~3 minutes que tous les conteneurs soient `healthy`. Accédez à `https://<ip-manager>`. Les identifiants par défaut du dashboard sont `admin` / `SecretPassword` (définis dans le fichier `.env` / `docker-compose.yml`). **Changez-les avant tout usage réel** — ce mot de passe par défaut est public.
 
 Vérifiez les services :
 
@@ -136,55 +179,82 @@ docker compose ps
 Récupérez la clé d'enregistrement :
 
 ```bash
+# Le nom du conteneur dépend du nom du projet compose ; retrouvez-le si besoin :
+#   docker ps --format '{{.Names}}' | grep manager
 docker exec -it single-node-wazuh.manager-1 \
   /var/ossec/bin/manage_agents
 # A → ajouter un agent, donnez un nom et l'IP cible
-# E → extraire la clé
+# E → extraire la clé (chaîne base64 à coller sur l'agent)
+# Q → quitter
 ```
 
-Sur la VM **cible** :
+Sur la VM **cible**, ajoutez d'abord le dépôt APT Wazuh (sinon `apt install wazuh-agent` échoue : le paquet n'est pas dans les dépôts Debian/Ubuntu) :
 
 ```bash
-WAZUH_MANAGER='<ip-manager>' apt install wazuh-agent
-echo "<CLE_BASE64>" | /var/ossec/bin/manage_agents -i
-systemctl enable --now wazuh-agent
+# Dépôt officiel Wazuh
+curl -s https://packages.wazuh.com/key/GPG-KEY-WAZUH | sudo gpg --dearmor \
+  -o /usr/share/keyrings/wazuh.gpg
+echo "deb [signed-by=/usr/share/keyrings/wazuh.gpg] https://packages.wazuh.com/4.x/apt/ stable main" \
+  | sudo tee /etc/apt/sources.list.d/wazuh.list
+sudo apt update
+
+# Installation : WAZUH_MANAGER renseigne l'IP du manager dans la config au moment de l'install
+sudo WAZUH_MANAGER='<ip-manager>' apt install -y wazuh-agent
+
+# Importer la clé extraite à l'étape précédente, puis démarrer
+echo "<CLE_BASE64>" | sudo /var/ossec/bin/manage_agents -i
+sudo systemctl daemon-reload
+sudo systemctl enable --now wazuh-agent
 ```
+
+La clé d'enregistrement est un secret partagé qui identifie l'agent auprès du manager. Elle est encodée en base64 et contient l'ID de l'agent, son nom, son IP, et un secret aléatoire. Une fois importée, l'agent établit une connexion chiffrée persistante vers le manager (port **1514/TCP** par défaut ; l'enregistration automatique via le service `authd`, si activée, utilise le **1515/TCP**). L'agent devient ensuite visible dans le dashboard et commence à remonter les logs en temps réel.
 
 Dans le dashboard, l'agent passe **Active** au bout d'une minute.
 
 ## 📋 Étape 3 — Comprendre les règles Wazuh
 
-Wazuh fournit la règle **5712** (`SSH authentication failed`) et **5710** (`Multiple authentication failures`). Anatomie :
+Wazuh fournit nativement, dans `0095-sshd_rules.xml`, une chaîne de règles SSH dont les deux pièces clés sont la règle atomique **5710** (`Attempt to login using a non-existent user`) et la règle composite **5712** (`sshd brute force`). Attention aux ID : c'est **5712 qui est la règle de corrélation** (level 10), pas l'inverse. Anatomie réelle du ruleset officiel :
 
 ```xml
 <!-- /var/ossec/ruleset/rules/0095-sshd_rules.xml -->
-<rule id="5712" level="5">
+
+<!-- Atomique : un seul événement "invalid user" -->
+<rule id="5710" level="5">
   <if_sid>5700</if_sid>
-  <match>Failed password</match>
-  <description>sshd: authentication failed.</description>
+  <match>illegal user|invalid user</match>
+  <description>sshd: Attempt to login using a non-existent user</description>
   <mitre>
     <id>T1110.001</id>
   </mitre>
-  <group>authentication_failed,pci_dss_10.2.4,...</group>
+  <group>authentication_failed,pci_dss_10.2.4,gpg13_7.1,...</group>
 </rule>
 
-<rule id="5710" level="10" frequency="8" timeframe="120">
-  <if_matched_sid>5712</if_matched_sid>
+<!-- Composite : corrélation de 8x la règle 5710 en 120 s, même IP -->
+<rule id="5712" level="10" frequency="8" timeframe="120" ignore="60">
+  <if_matched_sid>5710</if_matched_sid>
   <same_source_ip />
-  <description>sshd: Multiple authentication failures.</description>
+  <description>sshd: brute force trying to get access to the system.</description>
   <mitre>
     <id>T1110.001</id>
   </mitre>
+  <group>authentication_failures,...</group>
 </rule>
 ```
+
+> 💡 La règle « générique » `sshd: authentication failed` (qui matche `Failed password`) porte l'ID **5716** (atomique, level 5), distincte de 5710 qui cible spécifiquement les *invalid users*. La règle de succès est **5715** (`Accepted`/`authenticated`). Vérifiez toujours les ID exacts avec `/var/ossec/bin/wazuh-logtest` (anciennement `ossec-logtest`) sur votre version : les ruleset évoluent.
+
+La règle 5710 est une règle **atomique** : elle matche chaque tentative de login sur un utilisateur inexistant, individuellement. Son `level="5"` la maintient sous le seuil d'alerte (niveau 7 par défaut dans Wazuh) — elle est loggée pour l'audit mais ne génère pas de notification. La chaîne `<if_sid>5700</if_sid>` signifie qu'elle ne s'applique qu'aux événements déjà classifiés comme SSH par la règle parente 5700.
+
+La règle 5712 est la règle **composite** de corrélation. `frequency="8"` et `timeframe="120"` définissent la fenêtre : 8 matches de la règle 5710 en 120 secondes. `<same_source_ip />` restreint la corrélation à la même adresse IP source — sans ce tag, 8 fails depuis 8 IP différentes déclencheraient aussi la règle. `ignore="60"` impose un délai de 60 s avant que la règle ne puisse se redéclencher pour la même source (anti-spam d'alertes). Son `level="10"` déclenche l'alerte active.
 
 ### Décodage
 
 - `level="5"` → événement (loggé), pas alerté
 - `level="10"` → alerte significative (déclenche notif + dashboard)
-- `if_matched_sid="5712"` → corrélation : on attend N matches de la règle parent
+- `if_matched_sid="5710"` → corrélation : on attend N matches de la règle parent (5710)
 - `frequency=8` / `timeframe=120` → 8 fois en 2 min depuis même IP
-- `<mitre>` → contexte adversaire
+- `ignore=60` → fenêtre d'anti-rebond : pas de re-trigger avant 60 s pour la même source
+- `<mitre>` → contexte adversaire (tactic: Credential Access TA0006, technique: Brute Force T1110.001)
 - `<group>` → compliance + classification (PCI-DSS, NIST 800-53, GDPR)
 
 ## 📋 Étape 4 — Simuler l'attaque
@@ -198,26 +268,36 @@ for i in $(seq 1 20); do
 done
 ```
 
+Cette boucle génère 20 tentatives de connexion SSH avec des credentials invalides. `sshpass` permet de passer un mot de passe en ligne de commande (outil de test uniquement — ne jamais utiliser en production). `-o StrictHostKeyChecking=no` évite le prompt de confirmation de fingerprint. `2>/dev/null` supprime les messages d'erreur verbeux pour que la boucle tourne proprement.
+
 ## 📋 Étape 5 — Investigation
 
 Dans **Wazuh Dashboard → Security events** :
 
-1. Filtrez sur `rule.id: 5710` ou `rule.level >= 10`
-2. Vous voyez l'alerte **"sshd: Multiple authentication failures"**
+1. Filtrez sur `rule.id: 5712` ou `rule.level >= 10`
+2. Vous voyez l'alerte **"sshd: brute force trying to get access to the system"**
 3. Cliquez sur un événement → champ `data.srcip` = votre poste
 4. Onglet **MITRE ATT&CK** → mappé sur **T1110.001 Brute Force: Password Guessing**
 
 ### Investigation guidée
 
-Pour reconstruire le scénario complet :
+L'investigation dans un SIEM suit une démarche structurée : on part de l'alerte vers le contexte, puis vers la timeline, puis vers la décision d'isolation. Chaque étape répond à une question différente :
 
 ```
-1. timestamp du premier 5712 (failed password)
+1. timestamp du premier 5710 (invalid user) / 5716 (failed password)
+   → quand l'attaque a-t-elle commencé ?
+
 2. source.ip de l'attaque
+   → IP isolée ou partagée avec d'autres hosts ? (pivot)
+
 3. quels users ont été testés ? (data.dstuser)
-4. y a-t-il un 5715 (Successful authentication) dans le même timeframe ?
+   → enumeration de comptes ou tentative ciblée ?
+
+4. y a-t-il un 5715 (Accepted / successful authentication) dans le même timeframe ?
    → si oui, COMPROMISSION : isoler l'host, reset password
+
 5. l'IP est-elle dans nos threat feeds ? (Wazuh → Threat Intel)
+   → score de réputation, campagne connue ?
 ```
 
 ## 📋 Étape 6 — Réagir automatiquement
@@ -228,14 +308,26 @@ Activez l'**active-response** `firewall-drop` dans `/var/ossec/etc/ossec.conf` s
 <active-response>
   <command>firewall-drop</command>
   <location>local</location>
-  <rules_id>5710</rules_id>
+  <rules_id>5712</rules_id>
   <timeout>600</timeout>
 </active-response>
 ```
 
+La directive `<command>firewall-drop</command>` référence un script de réponse livré avec Wazuh : il ajoute une règle iptables `INPUT DROP` pour l'IP source. On déclenche sur **5712** (la règle composite, level 10), **pas** sur 5710/5716 : ces règles atomiques se déclenchent à chaque tentative isolée — bannir dessus reviendrait à bloquer une IP sur une simple faute de frappe au login. On veut bannir le *pattern* brute force, pas l'événement unitaire. `<location>local</location>` indique que la commande s'exécute sur l'agent de l'host cible (par opposition à `server`, qui l'exécuterait sur le manager). `<timeout>600</timeout>` définit la durée du ban en secondes (10 minutes ici) — après quoi Wazuh retire automatiquement la règle iptables.
+
 Relancez le brute-force : l'IP est **bannie 10 minutes** via iptables.
 
-> ⚠️ Toujours ajouter une **allowlist** (`/var/ossec/etc/ossec.conf` → `<white_list>`) avec les IP de votre infra, monitoring, bastions. Sinon un faux positif peut bloquer la prod.
+> ⚠️ Toujours ajouter une **allowlist** sur le **manager**, dans le bloc `global` de `/var/ossec/etc/ossec.conf` (voir ci-dessous).
+
+```xml
+<!-- /var/ossec/etc/ossec.conf (manager) -->
+<global>
+  <white_list>127.0.0.1</white_list>
+  <white_list>10.0.0.0/8</white_list>   <!-- réseau corp, monitoring, bastions -->
+</global>
+```
+
+Sans allowlist, un faux positif (un scanner de vuln interne, un check de monitoring, un collègue qui se trompe de mot de passe) peut faire bannir une IP de prod. Une IP listée ici ne sera jamais la cible d'un active-response.
 
 ## 📋 Étape 7 — File Integrity Monitoring (bonus)
 
@@ -251,7 +343,9 @@ Wazuh peut surveiller les fichiers sensibles :
 </syscheck>
 ```
 
-Modifiez `/etc/passwd` → alerte **rule 550** (Integrity checksum changed) instantanément.
+Le module `syscheck` calcule et stocke les hashs cryptographiques (SHA-256 par défaut) de chaque fichier dans les répertoires surveillés. À chaque modification, il recalcule le hash et compare. `check_all="yes"` active la vérification des attributs (permissions, owner, groupe) en plus du contenu. `realtime="yes"` utilise l'API inotify du kernel Linux pour une détection instantanée (sub-seconde) au lieu d'un scan périodique.
+
+Modifiez `/etc/passwd` (ex : `sudo usermod -c "test" root` puis revert) → alerte **rule 550** *Integrity checksum changed* (level 7), instantanément grâce à inotify. Les règles sœurs : **553** (fichier supprimé) et **554** (nouveau fichier détecté). Sur des chemins ultra-sensibles comme `/etc/passwd` ou `/etc/shadow`, écrivez une règle custom qui surcharge le niveau (ex : level 12) via `<if_sid>550</if_sid>` + `<field name="file">/etc/passwd</field>` pour la faire ressortir au-dessus du bruit FIM normal.
 
 ## 🧠 Anti-patterns
 

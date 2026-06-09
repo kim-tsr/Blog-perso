@@ -62,31 +62,42 @@ quiz:
 
 > 📚 **Série « API sécurisée from zero »** — Lab 4 / 4. L'API a des logs propres (Lab #3). On va maintenant écrire les détections et les tester pour de vrai.
 
-## 🧠 Théorie : detection-as-code et la pyramide de Bianco
+## 🧠 Théorie : detection-as-code et MITRE ATT&CK
 
-### La "Pyramid of Pain" de David Bianco
+Les Labs #1 à #3 ont construit une API qui se défend et qui journalise. Sans règles de détection sur ces logs, on a des données mais pas de signal — c'est comme avoir des caméras de surveillance dont personne ne regarde les écrans. Ce lab ferme la boucle : on transforme les logs en alertes actionnables.
 
-Ce que tu détectes définit combien tu fais souffrir l'attaquant pour s'adapter :
+### Pourquoi "detection-as-code" change tout
 
-```
-        ▲  TTPs / comportement      ┃  ━━━ DOULOUREUX
-        │  (T1110 brute force)      ┃       (refactor d'attaque)
-        │                            ┃
-   ┃ Tools (cobalt strike, mimikatz) ┃  ━━━ ÉLEVÉ
-   ┃                                  ┃
-   ┃ Network artifacts (User-Agent)   ┃  ━━━ ANNOYANT
-   ┃                                  ┃
-   ┃ Host artifacts (file hash)       ┃  ━━━ FACILE
-   ┃                                  ┃
-   ┃ Domain names                     ┃  ━━━ TRIVIAL
-   ┃                                  ┃
-   ┃ IP addresses                     ┃  ━━━ TRIVIAL
-   ┃                                  ┃
-   ┃ Hash values                      ┃  ━━━ TRIVIAL  (1 byte change → différent)
-   ▼                                   ━━━
-```
+Historiquement, les règles de détection (SIEM) vivaient dans des GUI propriétaires — non versionnées, non testées, souvent mal documentées. Une règle écrite par un analyste qui a quitté l'équipe devient un mystère six mois plus tard. Detection-as-code (DaC) applique les mêmes pratiques que le développement logiciel aux règles de détection :
 
-**Détecter sur des IP ou hashes :** l'attaquant change → tu rates. **Détecter sur des comportements (3 logins ratés puis 1 réussi puis création d'admin) :** l'attaquant doit changer toute sa méthode.
+- **Versionnées dans Git** : chaque règle a un historique, des auteurs, une raison d'être documentée dans la PR.
+- **Testées unitairement** : on fournit des logs d'exemple (positifs et négatifs) et on vérifie que la règle alerte sur les premiers, pas sur les seconds.
+- **Déployées en CI** : une règle qui passe les tests est déployée automatiquement sur le SIEM de production. Pas de "je l'ai uploadée manuellement".
+- **Portables** : le format Sigma permet d'écrire une règle une fois et de la convertir en LogQL (Loki), KQL (Elastic), ou SPL (Splunk) sans réécrire.
+
+### MITRE ATT&CK : mapper les comportements, pas les outils
+
+MITRE ATT&CK est une base de connaissances des tactiques et techniques utilisées par les attaquants réels, extraite d'incidents documentés. Chaque technique a un identifiant (`T1110.001`), une description, des sous-techniques, et une liste de procédures observées dans la nature.
+
+La valeur clé : en cartographiant une règle de détection sur une technique ATT&CK, on peut mesurer la **couverture défensive**. "Quelles techniques peuvent atteindre notre système sans qu'on le voit ?" — c'est la question que DeTT&CT (Detection Techniques & Tactics) aide à visualiser.
+
+<Stack layers={[
+  { label: "TTPs / comportement (T1110 brute force)", hint: "DOULOUREUX — forcer l'attaquant à refactoriser sa méthode", accent: "c" },
+  { label: "Outils (Cobalt Strike, Mimikatz)", hint: "ÉLEVÉ — changer d'outil est faisable mais coûteux", accent: "v" },
+  { label: "Artefacts réseau (User-Agent, patterns)", hint: "ANNOYANT — quelques minutes à modifier", accent: "v" },
+  { label: "Artefacts host (hash de fichier)", hint: "FACILE — 1 byte change le hash", accent: "a" },
+  { label: "Domaines / IP", hint: "TRIVIAL — changer en quelques secondes", accent: "a" },
+]} caption="Pyramid of Pain (David Bianco) — détecter les comportements plutôt que les indicateurs bas-niveau" bottom="first" />
+
+Conséquence pratique : une règle qui bloque une IP spécifique est inutile en 5 minutes (l'attaquant change d'IP). Une règle qui détecte "3 auth.failure suivis d'un auth.success sur le même compte en 60 secondes" force l'attaquant à ralentir drastiquement son attaque — peut-être au point de la rendre non rentable.
+
+### Détection par seuil vs détection par anomalie
+
+Il existe deux grands paradigmes pour alerter :
+
+**Seuils absolus** : "plus de 50 auth.failure en 5 min depuis la même IP → alerte". Simple, déterministe, bas volume de faux positifs. Aveugle aux attaques lentes ("low and slow") : 4 tentatives par heure pendant une semaine passent sous le seuil de 50/5min.
+
+**Déviation du baseline** : "le taux d'erreur 4xx est 3 écarts-types au-dessus de la moyenne des 7 derniers jours → alerte". Attrape les anomalies relatives, y compris les attaques lentes. Plus de faux positifs lors des déploiements ou des pics légitimes. En pratique, on combine les deux : seuils absolus pour les comportements évidemment malveillants, déviation du baseline pour les patterns subtils.
 
 ## 🎯 Objectif
 
@@ -98,15 +109,24 @@ Ce que tu détectes définit combien tu fais souffrir l'attaquant pour s'adapter
 
 ## 📐 Architecture de détection
 
-```
-   Logs JSON     LogQL alertes     Alertmanager     Réponse
-   (Lab #3)      ────────────►     ─────────────►   ──────────────►
-       │           règles                              Slack/SOAR
-       │           seuils                              kube-delete
-       │
-       ▼
-   Loki (rétention 30 jours pour hunt manuel)
-```
+<Topology
+  nodes={[
+    { id: "api",    kind: "service", label: "API Go",      col: 1, row: 1, accent: "c" },
+    { id: "loki",   kind: "db",      label: "Loki",        col: 2, row: 1, accent: "v" },
+    { id: "ruler",  kind: "service", label: "Loki Ruler",  col: 2, row: 2, accent: "v" },
+    { id: "am",     kind: "edge",    label: "Alertmanager",col: 3, row: 1, accent: "a" },
+    { id: "slack",  kind: "cloud",   label: "Slack / SOAR",col: 4, row: 1, accent: "a" },
+    { id: "hunt",   kind: "user",    label: "Analyste",    col: 3, row: 2, accent: "s" },
+  ]}
+  edges={[
+    { from: "api",   to: "loki",   label: "logs JSON", kind: "flow" },
+    { from: "loki",  to: "ruler",  label: "évalue règles", kind: "sync" },
+    { from: "ruler", to: "am",     label: "FIRING",    kind: "flow" },
+    { from: "am",    to: "slack",  label: "notify",    kind: "flow" },
+    { from: "loki",  to: "hunt",   label: "LogQL hunt",kind: "data" },
+  ]}
+  caption="Architecture SIEM minimaliste — Loki + Ruler + Alertmanager couvre 80% des besoins d'une API"
+/>
 
 ## 📋 Règle 1 — Brute force sur l'authentification
 
@@ -132,40 +152,55 @@ groups:
           runbook: "Vérifier whois IP, bloquer au firewall si confirmé"
 ```
 
+Cette règle est un exemple de detection-as-code en YAML Loki. `expr` est une requête LogQL qui retourne une valeur numérique. `for: 1m` évite les faux positifs sur des pics momentanés : la condition doit être vraie pendant 1 minute continue avant de déclencher. Les labels `mitre_tactic` et `mitre_technique` permettent de filtrer les alertes par matrice ATT&CK dans un dashboard de couverture. `{{ $labels.ip }}` est une template Alertmanager qui injecte la valeur du label `ip` dans le message — sans ça, l'alerte ne dit pas quelle IP est suspecte.
+
 ### Simulation : on attaque
 
+> 🔗 **Prérequis de continuité** — le `/login` du Lab #1 était simplifié (il ne vérifiait pas de mot de passe). Pour que le brute force ait un sens et génère des `auth.failure`, l'issuer doit maintenant comparer le couple user/password à une source de vérité et **logguer l'échec** :
+> ```go
+> if !checkPassword(user, r.FormValue("password")) {
+>   logging.SecEvent(r.Context(), "auth.failure",
+>     slog.String("user", user), slog.String("ip", clientIP(r)),
+>     slog.String("reason", "bad_credentials"))
+>   http.Error(w, "invalid credentials", 401); return  // corps: "invalid"
+> }
+> ```
+> Sans ce log côté issuer, les règles brute force ne voient rien : un `/login` qui répond 200 à tout n'émet aucun signal.
+
 ```bash
-# Avec hydra (apt install hydra)
-hydra -l alice -P /usr/share/wordlists/rockyou.txt -t 4 \
+# hydra (Debian/Ubuntu : apt install hydra). Port 8081 = l'issuer du Lab #1.
+hydra -l alice -P /usr/share/wordlists/rockyou.txt -t 4 -s 8081 \
   api.homelab.lan http-post-form "/login:user=^USER^&password=^PASS^:F=invalid"
 ```
 
-→ après 1 minute l'alerte se déclenche.
+→ après ~1 minute (le `for: 1m` de la règle) l'alerte se déclenche.
+
+`-t 4` limite la parallélisation à 4 threads — assez pour déclencher la règle sans saturer le réseau de test (et hydra recommande `≤ 4` sur HTTP pour éviter les faux négatifs dus aux connexions refusées). `-s 8081` cible le port de l'issuer. `-P rockyou.txt` est un dictionnaire de mots de passe réels issus de fuites — ~14 millions d'entrées classées par fréquence. `F=invalid` dit à hydra que la **présence** de la chaîne "invalid" dans la réponse signale un échec, ce qui lui permet de distinguer succès et échec sans se fier au seul code HTTP.
 
 ## 📋 Règle 2 — Énumération de comptes
 
 **MITRE** : T1087 (Account Discovery)
 
-Symptôme : beaucoup d'IPs différentes, beaucoup d'users testés, peu de hits par user.
+Symptôme distinctif du brute force : là où un brute force pilonne **un** compte, l'énumération balaie **beaucoup de comptes différents** depuis une même source, souvent avec une seule tentative par compte.
+
+La clé est de compter les **users distincts** par IP, pas le volume total. Pour ça, on promeut `user` en label (`| label_format`) puis on agrège :
 
 ```logql
-# Nombre d'users distincts essayés par IP en 10min
+# Nombre d'users DISTINCTS testés par IP sur 10 min
 count by (ip) (
-  count_over_time({app="api"} | json | event="auth.failure" [10m])
-) > 50
+  sum by (ip, user) (
+    count_over_time({app="api"} | json | event="auth.failure" [10m])
+  )
+) > 30
 ```
 
-Ou plus subtil — un seul attaquant testant beaucoup d'users :
+L'idée : le `sum by (ip, user)` interne crée une série par couple (ip, user) ; le `count by (ip)` externe compte combien de séries `user` distinctes existent pour chaque IP. Une IP qui dépasse 30 comptes différents en 10 min fait de l'énumération, pas une faute de frappe.
 
-```logql
-sum by (ip) (
-  count_over_time({app="api"} | json | event="auth.failure" | line_format "{{.user}}" [10m])
-)
-```
+L'énumération de comptes est le précurseur du brute force ciblé : d'abord on identifie les comptes qui existent (via les messages d'erreur ou les temps de réponse différents pour "user inconnu" vs "mauvais mot de passe" — d'où l'importance de réponses uniformes côté serveur), ensuite on attaque ces comptes. *Leçon défensive : renvoyer le MÊME message et le même temps de réponse que le compte existe ou non casse cette phase de reconnaissance.*
 
 ## 📋 Règle 3 — RBAC denied en série (recon de permissions)
 
-**MITRE** : T1087.004 (Cloud Account Discovery)
+**MITRE** : T1069 (Permission Groups Discovery) — la découverte de ses propres droits ; on peut y associer T1087 (Account Discovery) si l'énumération porte sur des comptes.
 
 Quand un user authentifié tente d'accéder à 10+ endpoints sans permission en 5 min → il scanne, pas une faute de clic.
 
@@ -175,20 +210,35 @@ sum by (user) (
 ) > 10
 ```
 
+Cette règle illustre pourquoi il est crucial de loguer les refus RBAC (Lab #3). Un `403 Forbidden` retourné au client sans log côté serveur laisse ce comportement invisible. Avec les logs `rbac.denied`, on peut détecter la reconnaissance de permissions — un pattern ATT&CK distinct du brute force : l'attaquant a déjà un compte valide et cherche à comprendre sa surface d'action avant d'escalader ses droits.
+
 ## 📋 Règle 4 — Privilege escalation après login
 
 **MITRE** : T1078 (Valid Accounts) suivi de T1098 (Account Manipulation)
 
-Pattern à détecter : `auth.success` puis `rbac.granted` sur `users:write` ou `admin:*` dans les 5 minutes pour un user qui n'a jamais touché à ces endpoints avant.
+Pattern à détecter : un user effectue avec **succès** une action sensible (`users:write`, `admin:*`) alors qu'il n'a jamais touché à ces endpoints auparavant.
 
-Cette détection est plus complexe — généralement on l'écrit en code (Python + Loki) plutôt qu'en LogQL pur :
+> 🔗 **Prérequis de logging** — au Lab #3 on n'a logué que `rbac.denied`. Pour cette règle il faut AUSSI logguer les actions sensibles **autorisées**. Ajoute dans le middleware RBAC, quand `Can(role, action)` est vrai ET que l'action est sensible :
+> ```go
+> if sensitive(action) { // ex: prefix "admin:" ou "users:write"
+>   logging.SecEvent(r.Context(), "rbac.granted",
+>     slog.String("user", user), slog.String("action", action))
+> }
+> ```
+> Sans ce log, l'escalade réussie est invisible : on ne verrait que les échecs.
+
+Cette détection est plus complexe — généralement on l'écrit en code (Python interrogeant l'API Loki) plutôt qu'en LogQL pur :
 
 ```python
 # detector/escalation.py
-for user, events in group_by_user(last_5_min):
-    if 'admin:create' in events and user not in known_admins:
-        alert(f"Suspicious admin action by non-admin user: {user}")
+known_admins = {"root", "ops-admin"}  # source de vérité : ta DB / IAM
+
+for user, events in group_by_user(last_5_min):  # events = liste d'actions rbac.granted
+    if any(a.startswith("admin:") for a in events) and user not in known_admins:
+        alert(f"Action admin par un compte non-admin: {user} ({events})")
 ```
+
+Ce détecteur Python illustre les limites de LogQL pour les corrélations temporelles complexes : LogQL agrège bien les comptages, mais il ne peut pas facilement "joindre" deux événements séquentiels (`A suivi de B dans une fenêtre`). Un micro-service de détection en Python (qui interroge l'API `/loki/api/v1/query_range`) est plus expressif. C'est le point d'entrée vers les SIEM complets comme Elastic SIEM ou Google SecOps (ex-Chronicle) qui supportent nativement la corrélation d'événements (EQL, séquences).
 
 ## 📋 Règle 5 — Anomaly detection par baseline
 
@@ -211,6 +261,8 @@ for user, events in group_by_user(last_5_min):
 )
 ```
 
+`avg_over_time(...[7d:5m])` calcule la moyenne des valeurs de la sous-requête sur 7 jours, avec une résolution de 5 minutes. `stddev_over_time` fait de même pour l'écart-type. `3σ` (3 écarts-types) = seuil statistique qui couvre 99.7% de la distribution normale — au-delà, c'est anormal. Le piège : si l'application est très nouvelle (< 7 jours de données) ou si le trafic est très faible, la baseline est instable et génère des faux positifs. Attendre 2+ semaines de données avant d'activer cette règle.
+
 > 💡 Garde 7+ jours dans Loki ! 24h ne suffit pas pour un baseline pertinent.
 
 ## 📋 Validation purple team
@@ -224,6 +276,8 @@ for user, events in group_by_user(last_5_min):
 | 4xx burst soudain | ab | ApiAnomaly | < 5 min |
 
 **Exécute chaque attaque. Note le délai. Si une alerte rate, débogue avant le prochain test.**
+
+La discipline purple team est simple : on ne considère une règle comme "en production" que si on a prouvé qu'elle déclenche sur l'attaque qu'elle est censée détecter. Une règle non testée est une fausse assurance. Le tableau ci-dessus devient un test de régression : à chaque modification du pipeline de logs, on rejoue les simulations et on vérifie que les délais n'ont pas dégradé.
 
 ## 🧠 Documentation pour le SOC
 
@@ -246,6 +300,8 @@ Chaque alerte doit avoir un **runbook** :
 - Ouvrir ticket Jira sec-XXX
 - Notif #security-incidents
 ```
+
+Un runbook suit le schéma "Vérifier → Mitiger → Communiquer". La vérification évite les actions précipitées sur une fausse alerte. La mitigation est prescriptive (pas de "décider au cas par cas" sous stress). La communication garantit que l'incident est tracé même si ça ne dure que 5 minutes. Ces runbooks doivent eux aussi être versionnés dans Git — à côté des règles de détection, dans le même repo.
 
 ## 🚀 Pour aller plus loin
 

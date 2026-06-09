@@ -61,9 +61,15 @@ quiz:
 
 ## 🧠 Théorie : qu'est-ce qu'une PKI exactement ?
 
-PKI (**Public Key Infrastructure**) = l'ensemble des composants qui permettent de **distribuer la confiance** via la cryptographie asymétrique. Sans PKI, chaque service devrait vérifier individuellement chaque autre — ingérable.
+PKI (**Public Key Infrastructure**) = l'ensemble des composants qui permettent de **distribuer la confiance** via la cryptographie asymétrique. Sans PKI, chaque service devrait vérifier individuellement chaque autre — ingérable. La PKI résout le problème fondamental de la cryptographie à clé publique : comment savoir que la clé publique que vous venez de recevoir appartient vraiment à qui vous croyez ?
+
+La réponse est la **signature de certificat** : une tierce partie de confiance (la Certificate Authority) appose sa signature cryptographique sur votre clé publique, en attestant votre identité. Si vous faites confiance à la CA, vous faites transitivement confiance à tous les certificats qu'elle a signés. C'est la chaîne de confiance.
+
+Dans l'Internet public, une dizaine de CAs racines (DigiCert, Let's Encrypt, Sectigo...) sont pré-installées dans les OS et navigateurs — c'est votre ancrage de confiance par défaut. Dans un réseau interne, vous créez votre propre ancrage : **votre CA privée**. Les machines qui font confiance à votre CA peuvent vérifier tous les certificats que vous émettez, sans dépendre des CAs publiques ni payer par certificat.
 
 ### Anatomie d'un certificat X.509
+
+Un certificat X.509 est un document ASN.1 (format binaire DER, souvent encodé en base64 PEM) contenant plusieurs sections critiques :
 
 ```
    ┌──────────────────────────────────────────────────┐
@@ -83,28 +89,50 @@ PKI (**Public Key Infrastructure**) = l'ensemble des composants qui permettent d
    └──────────────────────────────────────────────────┘
 ```
 
-### Chaîne de confiance
+Chaque champ a une fonction précise. Le **Subject** identifie le propriétaire du certificat — aujourd'hui le champ `CN` est déprécié au profit des **Subject Alternative Names (SAN)**, qui peuvent contenir plusieurs noms DNS et adresses IP. Les navigateurs et runtimes modernes ignorent le CN si des SANs sont présents. Les **Extended Key Usage (EKU)** précisent l'usage autorisé : `ServerAuth` pour TLS serveur, `ClientAuth` pour mTLS client — un certificat avec uniquement `ServerAuth` ne peut pas s'authentifier comme client mTLS.
 
-```
-                   ┌───────────────────┐
-                   │   Root CA         │ ← clé hors-ligne, longue durée (10 ans)
-                   │   (offline)       │
-                   └─────────┬─────────┘
-                             │ signe
-                             ▼
-                   ┌───────────────────┐
-                   │ Intermediate CA   │ ← step-ca, signe en ligne
-                   │   (online)        │
-                   └─────────┬─────────┘
-                             │ signe
-              ┌──────────────┼──────────────┐
-              ▼              ▼              ▼
-        ┌─────────┐    ┌─────────┐    ┌─────────┐
-        │api.cert │    │db.cert  │    │app.cert │  ← 24h, renouvelés auto
-        └─────────┘    └─────────┘    └─────────┘
-```
+### Chaîne de confiance : Root → Intermediate → Leaf
 
-**Pourquoi 2 niveaux ?** Si l'intermediate est compromis, on le révoque sans changer la root (qui est dans un coffre). Pas besoin de redistribuer la racine de confiance à tous les clients.
+<Mermaid chart={`
+graph TD
+    root["🔐 Root CA\n(offline, coffre physique)\nValidité : 10 ans"] -->|signe| inter["🖥️ Intermediate CA\n(step-ca, online)\nValidité : 5 ans"]
+    inter -->|signe| api["📄 api.crt\nValidité : 24h"]
+    inter -->|signe| db["📄 db.crt\nValidité : 24h"]
+    inter -->|signe| client["📄 client.crt\nValidité : 24h"]
+    style root fill:#2d1b69,color:#fff
+    style inter fill:#1b4d69,color:#fff
+`} caption="Hiérarchie PKI à deux niveaux : Root offline, Intermediate online, Leaf éphémères" />
+
+**Pourquoi 2 niveaux ?** Si l'intermediate est compromis, on le révoque sans changer la root (qui est dans un coffre). Pas besoin de redistribuer la racine de confiance à tous les clients. La root n'est utilisée que pour signer l'intermediate — elle peut rester hors-ligne le reste du temps.
+
+Si la root elle-même était compromise, il faudrait redistribuer manuellement la nouvelle root à chaque OS, navigateur et service qui lui fait confiance — une opération désastreuse. C'est pourquoi les CAs publiques protègent leurs roots avec des HSM (Hardware Security Modules) stockés dans des coffres physiques.
+
+### Stratégie short-lived : pourquoi 24h ?
+
+La révocation est le talon d'Achille de la PKI classique. Les mécanismes standards (CRL : Certificate Revocation List, OCSP : Online Certificate Status Protocol) ont des problèmes pratiques : les CRLs deviennent volumineuses, les checks OCSP ajoutent de la latence, et les implémentations en mode soft-fail (ne pas bloquer si le check échoue) rendent la révocation inefficace en cas de panne du serveur OCSP.
+
+La solution moderne : **ne pas révoquer, expirer**. Un certificat de 24h renouvelé automatiquement par ACME devient invalide en 24h maximum après une compromission — sans CRL, sans OCSP, sans infrastructure de révocation. C'est l'approche adoptée par cert-manager dans Kubernetes, par Istio pour le mTLS entre pods, par Let's Encrypt pour les certificats publics à court terme.
+
+### TLS classique vs mTLS
+
+<Mermaid chart={`
+sequenceDiagram
+    participant C as Client
+    participant S as Serveur
+    Note over C,S: TLS classique (1-way auth)
+    C->>S: ClientHello
+    S->>C: ServerHello + Certificat serveur
+    C->>S: Vérification OK — clé de session
+    C->>S: Données chiffrées
+    Note over C,S: mTLS (2-way auth)
+    C->>S: ClientHello
+    S->>C: ServerHello + Certificat serveur + CertificateRequest
+    C->>S: Certificat client + Vérification OK
+    S->>C: Clé de session établie
+    C->>S: Données chiffrées (identité client vérifiée)
+`} caption="TLS 1-way vs mTLS 2-way : dans mTLS, le serveur vérifie aussi le certificat du client" />
+
+En TLS classique, seul le serveur prouve son identité. L'authentification du client se fait ensuite en couche applicative (mot de passe, token JWT...). En mTLS, **la couche transport authentifie les deux parties** avant même qu'une ligne de code applicatif ne s'exécute — c'est plus robuste et élimine une classe entière d'attaques.
 
 ## 🎯 Objectif
 
@@ -130,6 +158,10 @@ step ca init \
   --acme
 ```
 
+> 💡 Les URLs `docs-ca-install/latest` pointent vers la dernière version au moment du téléchargement. Pour un lab reproductible, préférez une version épinglée depuis les releases GitHub de smallstep (ex. `https://github.com/smallstep/cli/releases`) et vérifiez l'empreinte (`sha256sum`) avant `dpkg -i`.
+
+La commande `step ca init` crée l'arborescence PKI complète : génère une paire de clés root, une paire de clés intermediate, un certificat root auto-signé, un certificat intermediate signé par le root, et les fichiers de configuration. Le flag `--acme` active le provisioner ACME (nommé `acme`) qui permettra aux clients certbot/acme.sh/step CLI d'obtenir des certificats automatiquement par challenge. Par défaut, `step ca init` crée **aussi** un provisioner JWK nommé d'après le flag `--provisioner` (ici `admin@homelab.lan`) — c'est lui qu'utilise `step ca certificate` sans `--provisioner` explicite. La clé root est chiffrée par le mot de passe que vous allez saisir — **c'est votre secret le plus sensible**, sans lui vous ne pouvez pas renouveler l'intermediate.
+
 step-ca te demande un mot de passe pour la clé root (stocke-le bien — c'est ton secret le plus sensible).
 
 ```bash
@@ -150,19 +182,35 @@ sudo cp /tmp/root_ca.crt /usr/local/share/ca-certificates/homelab.crt
 sudo update-ca-certificates
 ```
 
+La commande `update-ca-certificates` ajoute votre CA au magasin de certificats système (`/etc/ssl/certs/ca-certificates.crt`). Après cette étape, curl, wget, Go `http.Get()`, Python `requests`, et tout outil utilisant le store système feront automatiquement confiance aux certificats signés par votre CA — sans avoir à spécifier `--cacert` à chaque commande.
+
 Vérifie : `curl https://ca.homelab.lan:8443/health` doit retourner `OK` sans erreur TLS.
 
 ## 📋 Étape 3 — Émettre un certificat via ACME
 
-Installe un client ACME standard (lego, certbot, acme.sh). Ici avec `step ca certificate` (le client step natif) :
+Deux chemins coexistent, et il est important de ne pas les confondre :
+
+**Chemin rapide (provisioner JWK)** — `step ca certificate` utilise par défaut le provisioner JWK : l'authentification se fait avec le mot de passe du provisioner, sans challenge de domaine. Pratique pour un test immédiat :
 
 ```bash
-# Cert pour api.homelab.lan, valide 24h
+# Cert pour api.homelab.lan, valide 24h, via le provisioner JWK par défaut
 step ca certificate api.homelab.lan api.crt api.key --not-after 24h
 
 # Inspect
 step certificate inspect api.crt --short
 ```
+
+**Chemin ACME (ce que le lab vise réellement)** — pour passer par le provisioner `--acme` activé à l'Étape 1, il faut soit un client ACME standard (certbot, lego, acme.sh, cert-manager), soit `step` en lui désignant explicitement le provisioner ACME. C'est ce chemin qui réalise un challenge de domaine (HTTP-01 ou DNS-01) prouvant que vous contrôlez bien `api.homelab.lan` :
+
+```bash
+# Via le provisioner ACME (challenge HTTP-01) — step joue le rôle du client ACME
+step ca certificate api.homelab.lan api.crt api.key \
+  --provisioner acme --not-after 24h
+# certbot équivalent :
+# certbot certonly --standalone --server https://ca.homelab.lan:8443/acme/acme/directory -d api.homelab.lan
+```
+
+En coulisses, dans les deux cas `step` génère une paire de clés locale, crée un CSR (Certificate Signing Request), l'envoie à step-ca, qui retourne le certificat signé. La différence est l'**authentification** : JWK = secret du provisioner ; ACME = preuve cryptographique de contrôle du domaine. La clé privée ne quitte jamais la machine — seul le CSR (qui ne contient que la clé publique) transite.
 
 Tu verras :
 
@@ -187,12 +235,13 @@ import (
   "crypto/tls"
   "crypto/x509"
   "fmt"
-  "io/ioutil"
   "net/http"
+  "os"
 )
 
 func main() {
-  caCert, _ := ioutil.ReadFile("/tmp/root_ca.crt")
+  // os.ReadFile remplace ioutil.ReadFile, déprécié depuis Go 1.16
+  caCert, _ := os.ReadFile("/tmp/root_ca.crt")
   pool := x509.NewCertPool()
   pool.AppendCertsFromPEM(caCert)
 
@@ -211,13 +260,16 @@ func main() {
 }
 ```
 
+La ligne clé est `ClientAuth: tls.RequireAndVerifyClientCert` — c'est elle qui active le mTLS. Le champ `ClientCAs` précise quelles CAs sont autorisées à signer les certificats clients. Sans cette configuration, le serveur accepterait n'importe quel client sans vérification. Le handler accède aux informations du certificat client via `r.TLS.PeerCertificates` — l'identité est disponible dès la couche transport, avant même de lire le corps de la requête.
+
 Émets un certif client puis teste :
 
 ```bash
 step ca certificate client@homelab.lan client.crt client.key --not-after 24h
 
-# Sans cert client → 400 bad request
+# Sans cert client → échec dès le handshake TLS (pas de réponse HTTP)
 curl --cacert /tmp/root_ca.crt https://api.homelab.lan:8443/
+# → curl: (56) ... alert certificate required  (le serveur refuse au niveau TLS)
 
 # Avec cert client → 200 + identification
 curl --cacert /tmp/root_ca.crt \
@@ -225,6 +277,10 @@ curl --cacert /tmp/root_ca.crt \
      https://api.homelab.lan:8443/
 # → Hello, authenticated as client@homelab.lan
 ```
+
+`--cacert` indique au client curl quelle CA utiliser pour vérifier le serveur. `--cert` et `--key` fournissent le certificat et la clé privée client pour le mTLS. Point clé à bien comprendre : avec `RequireAndVerifyClientCert`, le refus se produit **pendant le handshake TLS**, avant tout traitement HTTP — il n'y a donc ni code 400 ni 401, mais une erreur TLS (`certificate required`). C'est précisément l'intérêt du mTLS : un client non autorisé n'atteint jamais la couche applicative.
+
+> 💡 `step ca certificate` écrit dans `api.crt` le certificat feuille **suivi de l'intermediate** (le bundle). C'est ce qui permet au serveur Go de présenter la chaîne complète : un client qui ne connaît que la root peut alors la reconstruire jusqu'à un ancrage de confiance.
 
 ## 📋 Étape 5 — Révocation
 
@@ -236,7 +292,7 @@ SERIAL=$(step certificate inspect client.crt --format json | jq -r .serial_numbe
 step ca revoke $SERIAL --reason key_compromise
 ```
 
-Le cert reste cryptographiquement valide mais la CA le refuse côté provisioner. En pratique, comme on est sur des certifs 24h, **on attend juste l'expiration** — c'est ça la stratégie short-lived.
+Nuance importante : la signature du certificat reste cryptographiquement valide (un vérificateur qui ne consulte ni CRL ni OCSP continuera de l'accepter jusqu'à expiration). Ce que fait `step ca revoke`, c'est marquer le serial comme révoqué dans la base de la CA, ce qui bloque surtout son **renouvellement** (passive revocation) ; step-ca ne sert pas d'OCSP/CRL par défaut. C'est exactement pourquoi la stratégie short-lived est supérieure : sur des certifs 24h renouvelés en continu, révoquer ≈ cesser de renouveler, et le certificat disparaît de lui-même sous 24h. **On attend l'expiration** plutôt que de bâtir une infrastructure de révocation fragile.
 
 ## ✅ Validation
 

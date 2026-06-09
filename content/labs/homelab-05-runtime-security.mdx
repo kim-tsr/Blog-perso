@@ -58,10 +58,43 @@ quiz:
       - "Pour économiser de l'argent"
       - "Falcosidekick ne supporte pas Slack"
     correct: 1
-    explanation: "Plus tu fragmente tes systèmes d'alertes, plus tu rates des choses. Tout passer par Alertmanager te donne : silences pendant maintenance, dédup, routage par sévérité, et un audit centralisé. C'est la convergence Ops + Sec."
+    explanation: "Plus tu fragmentes tes systèmes d'alertes, plus tu rates des choses. Tout passer par Alertmanager te donne : silences pendant maintenance, dédup, routage par sévérité, et un audit centralisé. C'est la convergence Ops + Sec."
 ---
 
 > 📚 **Série « Homelab from zero »** — Lab 5 / 5. Dernier de la série : on transforme le homelab construit aux 4 labs précédents en environnement durci, observable, et capable d'alerter en cas de compromis.
+
+## 🧠 Théorie : prévention vs détection — deux couches obligatoires
+
+La sécurité d'un système repose sur deux approches fondamentalement différentes, et une erreur courante est de croire qu'une remplace l'autre.
+
+La **prévention** bloque *avant* l'incident : une NetworkPolicy refuse une connexion, un Admission Webhook (OPA/Kyverno) bloque un déploiement sans securityContext, un firewall rejette un paquet. La prévention est déterministe — soit ça passe, soit ça ne passe pas. Sa limite : elle ne fonctionne que contre les menaces connues et les configurations anticipées.
+
+La **détection** observe *pendant* l'incident : Falco constate qu'un shell a été lancé dans un container, qu'un binaire a été modifié sous `/etc`, qu'une connexion vers une IP externe inattendue a été établie. La détection est probabiliste — elle génère des signaux qui nécessitent une interprétation. Sa force : elle capte ce qui a passé la prévention (zero-day, abus de permissions légitimes, compromis interne).
+
+En production, on combine les deux en **defense in depth** : prévention pour réduire la surface, détection pour rester alerté de ce qui passe quand même. Ce lab implémente les deux niveaux sur le homelab construit aux Labs #1-4.
+
+<Stack layers={[
+  { label: 'Alerting (Alertmanager + Falcosidekick)', hint: 'convergence des alertes infra + sécu', accent: 'v' },
+  { label: 'Détection runtime (Falco + eBPF)', hint: 'observe les syscalls de tous les containers', accent: 'c' },
+  { label: 'Prévention réseau (Cilium NetworkPolicies)', hint: 'default-deny + allow explicite', accent: 'a' },
+  { label: 'GitOps (ArgoCD)', hint: 'toute la config versionnée, self-healed', accent: 's' },
+]} caption="Defense in depth : 4 couches sur le homelab final" />
+
+## 🧠 Théorie : Falco — détection runtime via eBPF
+
+Falco est un **moteur de détection comportementale** : il observe les syscalls de tous les processus du système (containers inclus) et applique des règles déclaratives. Une règle Falco dit : "si ce pattern de syscalls se produit dans ce contexte, génère une alerte de cette priorité".
+
+L'instrumentation est réalisée via eBPF (sonde `modern_ebpf`, défaut recommandé depuis Falco 0.35+) : un programme eBPF est attaché aux tracepoints `sys_enter`/`sys_exit` du kernel. Il voit chaque `execve` (lancement de processus), `open`/`openat` (ouverture de fichier), `connect` (connexion réseau), `write` (écriture) — sans modifier les applications, sans sidecar, sans overhead significatif.
+
+L'intégration avec le cluster Kubernetes passe par **Falcosidekick** : un composant qui reçoit les alertes Falco en JSON et les route vers N destinations (Alertmanager, Slack, webhook, PagerDuty). En le connectant à l'Alertmanager du Lab #4, tu obtiens un système d'alerte **unifié** : infra et sécurité dans la même UX, avec silences, déduplication et routage par sévérité.
+
+<Pipeline steps={[
+  { label: 'Syscall kernel', hint: 'execve / open / connect', accent: 'v' },
+  { label: 'eBPF probe', hint: 'Falco modern_ebpf', accent: 'c' },
+  { label: 'Règles Falco', hint: 'évaluation condition/output', accent: 'a' },
+  { label: 'Falcosidekick', hint: 'routing JSON → N destinations', accent: 's' },
+  { label: 'Alertmanager', hint: 'dedup + routing + silence', accent: 'v' },
+]} caption="Pipeline de détection Falco : du syscall à l'alerte Alertmanager" />
 
 ## 🎯 Objectif
 
@@ -70,6 +103,29 @@ Adopter une posture **zero trust** côté pod et **detection-first** côté runt
 - Alertes Falco routées vers ton Alertmanager du Lab #4
 - **Default-deny** NetworkPolicy sur le namespace `demo`
 - Une simulation d'attaque (shell dans un container) qui déclenche une alerte visible
+
+## 📐 Architecture finale du homelab
+
+<Topology
+  nodes={[
+    { id: 'git',  kind: 'cloud',   label: 'Git repo',    hint: 'source de vérité',        col: 1, row: 1, accent: 'v' },
+    { id: 'argo', kind: 'service', label: 'ArgoCD',      hint: 'GitOps reconciler',        col: 2, row: 1, accent: 'v' },
+    { id: 'app',  kind: 'service', label: 'whoami',      hint: 'ns demo, default-deny',    col: 3, row: 1, accent: 'c' },
+    { id: 'cil',  kind: 'edge',    label: 'Cilium',      hint: 'NetworkPolicy eBPF',       col: 3, row: 2, accent: 'c' },
+    { id: 'falco',kind: 'service', label: 'Falco',       hint: 'eBPF syscall detection',   col: 2, row: 2, accent: 'a' },
+    { id: 'am',   kind: 'service', label: 'Alertmanager',hint: 'Lab #4 + Falcosidekick',  col: 2, row: 3, accent: 'a' },
+    { id: 'graf', kind: 'service', label: 'Grafana',     hint: 'métriques + logs + alertes',col: 3, row: 3, accent: 's' },
+  ]}
+  edges={[
+    { from: 'argo', to: 'git',  kind: 'flow', label: 'pull' },
+    { from: 'argo', to: 'app',  kind: 'flow', label: 'reconcile' },
+    { from: 'argo', to: 'falco',kind: 'flow', label: 'reconcile' },
+    { from: 'cil',  to: 'app',  kind: 'flow', label: 'NetworkPolicy' },
+    { from: 'falco',to: 'am',   kind: 'data', label: 'Falcosidekick' },
+    { from: 'am',   to: 'graf', kind: 'data', label: 'alertes' },
+  ]}
+  caption="Homelab final : GitOps + eBPF réseau + détection runtime + observabilité unifiée"
+/>
 
 ## 📋 Étape 1 — Falco via ArgoCD
 
@@ -86,11 +142,11 @@ spec:
   source:
     repoURL: https://falcosecurity.github.io/charts
     chart: falco
-    targetRevision: 4.8.0
+    targetRevision: 6.4.2   # version testée ; vérifie la dernière sur artifacthub.io
     helm:
       values: |
         driver:
-          kind: modern-bpf
+          kind: modern_ebpf
         tty: true
         falcosidekick:
           enabled: true
@@ -108,6 +164,12 @@ spec:
     syncOptions: [ CreateNamespace=true ]
 ```
 
+Les paramètres importants de cette configuration Helm :
+
+- `driver.kind: modern_ebpf` utilise la sonde eBPF moderne de Falco, basée sur CO-RE (Compile Once – Run Everywhere). Contrairement au driver legacy (module kernel à compiler), la sonde moderne est **embarquée dans le binaire Falco** : aucun téléchargement ni compilation de headers kernel. Elle s'adapte au kernel courant via les infos BTF (BPF Type Format) exposées par le kernel. Compatible Linux ≥ 5.8 (Debian 12 sur kernel 6.1 ✓). La valeur `auto` existe aussi : elle tente `modern_ebpf` puis retombe sur l'eBPF legacy ou le module kernel si nécessaire.
+- `json_output: true` fait émettre les alertes Falco en JSON structuré plutôt qu'en texte brut. C'est obligatoire pour que Falcosidekick puisse parser et router les alertes.
+- `alertmanager.hostport` pointe vers le service Alertmanager déployé au Lab #4 — c'est la convergence infrastructure + sécurité dans un seul système d'alerte.
+
 Commit + push. ArgoCD déploie Falco + Falcosidekick. Vérifie :
 
 ```bash
@@ -118,12 +180,15 @@ kubectl -n falco get pods
 
 ## 📋 Étape 2 — Tester la détection
 
-Lance un shell dans un container — c'est ce qu'un attaquant ferait après une RCE :
+Lance un shell dans un container — c'est ce qu'un attaquant ferait après une RCE. **Attention** : l'image `traefik/whoami` est construite `FROM scratch` (juste un binaire statique, aucun shell). Un `exec ... sh` y échouerait avec `exec: "sh": not found` et ne déclencherait donc pas la règle. On déploie un pod jetable basé sur une image avec shell :
 
 ```bash
-kubectl -n demo exec -it deployment/whoami -- sh
-exit
+# Pod de test avec un vrai shell (busybox fournit sh)
+kubectl -n demo run shell-test --image=busybox:1.36 --restart=Never -- sleep 300
+kubectl -n demo exec -it shell-test -- sh -c 'echo "je suis un attaquant"; exit'
 ```
+
+> 💡 Sur un container *qui a* un shell (cas réel d'une image applicative classique type `python`, `node`, `nginx`), un `kubectl exec ... sh` suffit. La règle « Terminal shell in container » détecte le **lancement du process shell**, peu importe ce qu'il fait ensuite.
 
 Regarde les logs Falco :
 
@@ -137,42 +202,49 @@ Tu verras quelque chose comme :
 Notice A shell was spawned in a container (user=root container=whoami...)
 ```
 
+Le grep filtre les logs Falco sur le mot "shell" pour isoler l'alerte pertinente parmi le flux continu d'événements. En production, tu filtrerais par priorité (`priority: WARNING` ou `CRITICAL`) plutôt que par contenu. Cette alerte correspond à la règle built-in Falco "Terminal shell in container" — elle est activée par défaut.
+
 → Dans Alertmanager (Grafana → Alertmanager UI ou directement http://192.168.1.20:30093) tu vois l'alerte arriver.
 
 ## 📋 Étape 3 — Règle Falco personnalisée
 
-Ajoute une règle qui surveille l'écriture dans `/etc` :
+On ajoute une règle qui surveille l'écriture sous `/etc`. **Point d'attention crucial** : un simple ConfigMap posé dans le namespace n'est pas chargé automatiquement par Falco — Falco ne lit que les fichiers présents dans `/etc/falco/rules.d/`. Le chart Helm fournit la clé `customRules` exactement pour ça : il crée le ConfigMap *et* le monte au bon endroit. On édite donc les `values` de l'Application `falco` du Lab #1 de cette étape :
 
 ```yaml
-# homelab-gitops/infra/security/falco-custom-rules.yaml
-apiVersion: v1
-kind: ConfigMap
-metadata:
-  name: falco-rules
-  namespace: falco
-data:
-  custom-rules.yaml: |
-    - rule: Write below /etc
-      desc: Un binaire écrit sous /etc (modif suspecte de config)
+# Ajout dans les helm.values de homelab-gitops/infra/security/falco.yaml
+customRules:
+  custom-rules.yaml: |-
+    - rule: Write below etc in container
+      desc: Un process écrit sous /etc dans un container (config tampering / persistence)
       condition: >
-        evt.dir=< and open_write
-        and fd.name startswith /etc
-        and not user.name in (root)
+        open_write
         and container
+        and fd.name startswith /etc
+        and not proc.name in (package_mgmt_binaries)
       output: >
-        Écriture /etc (user=%user.name container=%container.name
-        path=%fd.name proc=%proc.cmdline)
+        Ecriture sous /etc dans un container (user=%user.name
+        container=%container.name path=%fd.name proc=%proc.cmdline)
       priority: WARNING
-      tags: [filesystem, persistence]
+      tags: [filesystem, persistence, mitre_persistence]
 ```
 
-Commit + push. Test :
+La syntaxe Falco mérite une lecture attentive :
+
+- `open_write` est une macro built-in Falco qui combine déjà `evt.type in (open, openat, openat2)`, la direction de sortie du syscall (`evt.dir=<`, c'est-à-dire le retour dans l'espace utilisateur, donc *après* que l'action a eu lieu), et la présence d'un flag d'écriture. Utiliser cette macro plutôt qu'un filtre manuel `evt.type=open and ...` rend la règle lisible et maintenable — et évite les pièges sur les variantes `openat`/`openat2`.
+- `fd.name startswith /etc` matche les chemins commençant par `/etc`. `container` est une macro qui restreint aux events survenant dans un container (filtre sur le `container.id`).
+- `not proc.name in (package_mgmt_binaries)` exclut les gestionnaires de paquets (`apt`, `dpkg`, `rpm`…), qui écrivent légitimement sous `/etc`. C'est la manière propre de réduire les faux positifs : on liste les exceptions connues plutôt que de désactiver la règle.
+- `tags:` permet de filtrer/router les alertes Falcosidekick par tag — ici on aligne sur la nomenclature MITRE ATT&CK (`persistence`) pour faciliter le tri.
+
+Commit + push. ArgoCD met à jour le DaemonSet Falco (les pods redémarrent pour recharger les règles). Une fois `Running`, teste depuis un container *qui a un shell* (le pod `shell-test` busybox de l'étape 2, ou recrée-le) :
 
 ```bash
-kubectl -n demo exec deployment/whoami -- sh -c "echo test > /etc/test 2>&1 || true"
+kubectl -n demo exec shell-test -- sh -c "echo test > /etc/falco-test 2>&1 || true"
+
+# Nettoyage du pod de test une fois la démo finie
+kubectl -n demo delete pod shell-test
 ```
 
-L'alerte tombe.
+L'alerte tombe dans les logs Falco et remonte jusqu'à Alertmanager. (Sur whoami `FROM scratch`, le test échouerait faute de shell — d'où l'usage de busybox.)
 
 ## 📋 Étape 4 — Zero Trust NetworkPolicies
 
@@ -207,7 +279,13 @@ spec:
         - ports: [{ port: "80", protocol: TCP }]
 ```
 
-Commit + push. Vérifie dans Hubble UI (Lab #2) que les flux sont bien filtrés.
+La `default-deny-ingress` utilise un `podSelector: {}` vide — ce qui signifie "sélectionne tous les pods de ce namespace". `policyTypes: [Ingress]` avec une liste `ingress:` absente implique "aucun trafic entrant autorisé". C'est la première brique zero-trust : par défaut, rien n'entre dans le namespace `demo`.
+
+La `CiliumNetworkPolicy` `allow-monitoring` crée l'exception explicite et nécessaire : Prometheus doit pouvoir scraper les métriques de whoami. Le label `io.kubernetes.pod.namespace: monitoring` est un label automatiquement ajouté par Cilium à tous les endpoints — plus fiable qu'un label applicatif qui pourrait être usurpé.
+
+> 💡 **Cilium applique aussi les NetworkPolicy standard.** Même si on a passé `--disable-network-policy` à k3s au Lab #2, c'était pour désactiver le *contrôleur* iptables de k3s : Cilium, lui, prend en charge à la fois les `NetworkPolicy` Kubernetes natives **et** les `CiliumNetworkPolicy`. Les deux familles sont **additives** : une ressource ne peut qu'*autoriser* du trafic ; rien n'autorise = tout est refusé. La règle effective sur whoami est donc l'union de cette `allow-monitoring` et des policies `allow-client` posées au Lab #2 — pense à conserver ces dernières en Git si tu veux que le pod `client` continue de joindre whoami.
+
+Commit + push. Vérifie dans Hubble UI (Lab #2) que les flux sont bien filtrés — tu dois voir les flows Prometheus autorisés (verts) et les autres en DROPPED `policy-denied` (rouges).
 
 ## 📋 Étape 5 — Active response (optionnel mais badass)
 
@@ -221,6 +299,8 @@ falcosidekick:
       address: http://kube-killer.security:8080/kill
       minimumpriority: critical
 ```
+
+`minimumpriority: critical` filtre côté Falcosidekick — seules les alertes Falco de priorité `CRITICAL` ou supérieure déclenchent le webhook. Les `WARNING` et `NOTICE` passent toujours vers Alertmanager mais ne provoquent pas de kill. C'est le bon calibrage : un shell dans un container de prod est `CRITICAL`, une écriture dans `/tmp` est `WARNING`.
 
 (Tu peux écrire un petit service `kube-killer` qui supprime le pod incriminé — la base d'un SOAR maison).
 

@@ -1,0 +1,52 @@
+# dev.sec.ops — RBAC pour le ServiceAccount utilisé par lib/k8s.ts
+# Verbs limités : pas de exec, pas de portforward, pas d'accès aux secrets,
+# pas d'accès aux nodes. Juste le strict minimum pour CRUD pods/services/ingresses
+# dans son namespace.
+apiVersion: v1
+kind: ServiceAccount
+metadata:
+  name: devsecops-sandbox-controller
+  namespace: devsecops-labs
+---
+apiVersion: rbac.authorization.k8s.io/v1
+kind: Role
+metadata:
+  name: devsecops-sandbox-controller
+  namespace: devsecops-labs
+rules:
+  - apiGroups: [""]
+    resources: ["pods"]
+    verbs: ["get","list","create","delete"]
+  - apiGroups: [""]
+    resources: ["services"]
+    verbs: ["get","list","create","delete"]
+  - apiGroups: ["networking.k8s.io"]
+    resources: ["ingresses"]
+    verbs: ["get","list","create","delete"]
+---
+apiVersion: rbac.authorization.k8s.io/v1
+kind: RoleBinding
+metadata:
+  name: devsecops-sandbox-controller
+  namespace: devsecops-labs
+subjects:
+  - kind: ServiceAccount
+    name: devsecops-sandbox-controller
+    namespace: devsecops-labs
+roleRef:
+  kind: Role
+  name: devsecops-sandbox-controller
+  apiGroup: rbac.authorization.k8s.io
+---
+# Long-lived token Secret pour ce SA (k8s 1.24+ ne crée plus de tokens auto).
+# Récupérer le token avec :
+#   kubectl -n devsecops-labs get secret devsecops-sandbox-controller-token -o jsonpath='{.data.token}' | base64 -d
+# Le mettre dans K8S_SA_TOKEN sur Vercel.
+apiVersion: v1
+kind: Secret
+metadata:
+  name: devsecops-sandbox-controller-token
+  namespace: devsecops-labs
+  annotations:
+    kubernetes.io/service-account.name: devsecops-sandbox-controller
+type: kubernetes.io/service-account-token

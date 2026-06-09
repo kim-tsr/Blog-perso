@@ -16,6 +16,7 @@ tools:
   - "nsenter"
   - "cgroups v2"
   - "debootstrap"
+sandboxable: true
 quiz:
   - question: "Qu'est-ce qu'un container fondamentalement ?"
     options:
@@ -59,53 +60,58 @@ quiz:
     explanation: "unshare est la commande Linux qui crée des nouveaux namespaces. C'est EXACTEMENT ce que Docker fait sous le capot — il appelle le syscall clone() avec les flags namespaces, puis exec() ton process dedans."
 ---
 
-## 🧠 Théorie : un container n'est PAS une VM
+## Théorie : un container n'est PAS une VM
 
-Premier malentendu à dissiper :
+Le malentendu le plus courant en infrastructure est de traiter les containers comme de petites VMs. Ce sont des objets radicalement différents dans leur mécanisme d'isolation. Une VM crée une frontière matérielle virtuelle : chaque VM a son propre kernel, ses propres pilotes, son propre BIOS émulé. L'hyperviseur intercepte les accès matériels et segmente physiquement les ressources. Un container, à l'opposé, n'a **aucun kernel dédié** — il partage le kernel de la machine hôte. Son isolation est purement logicielle, implémentée directement par le kernel via deux mécanismes fondamentaux : les **namespaces** et les **cgroups**.
 
-```
-   Virtual Machine (KVM, VMware)        Container (Docker, containerd)
+Cette distinction a des implications profondes. Un container boot en millisecondes parce qu'il n'y a pas de kernel à initialiser — le kernel tourne déjà. Son footprint mémoire est minimal parce qu'il n'embarque que les binaires et libs nécessaires à l'application, pas un OS entier. Mais la contrepartie est réelle : si le kernel hôte est vulnérable, tous les containers sont exposés. Une exploitation de kernel escape (breakout) depuis un container compromet la machine entière. Les VMs offrent une isolation bien plus forte — au prix de la densité et de la performance.
 
-   ┌──────────────────┐                ┌──────────────────┐
-   │  App             │                │  App             │
-   ├──────────────────┤                ├──────────────────┤
-   │  Bins / Libs     │                │  Bins / Libs     │
-   ├──────────────────┤                ├──────────────────┤
-   │  Guest OS        │                │  (PAS de guest OS)│
-   │  + Kernel        │                │   - utilise le   │
-   ├──────────────────┤                │   kernel HÔTE    │
-   │  Hypervisor      │                ├──────────────────┤
-   ├──────────────────┤                │  Container runtime│
-   │  Host OS         │                ├──────────────────┤
-   ├──────────────────┤                │  Host OS         │
-   │  Hardware        │                ├──────────────────┤
-   └──────────────────┘                │  Hardware        │
-                                       └──────────────────┘
+<Stack layers={[
+  { label: "Application (votre workload)", accent: "v" },
+  { label: "Binaires / Libs (rootfs container)", hint: "Debian, Alpine, distroless…", accent: "c" },
+  { label: "Container runtime", hint: "runc / crun — implémente la spec OCI", accent: "a" },
+  { label: "Namespaces + cgroups + capabilities + seccomp", hint: "primitives d'isolation du kernel", accent: "s" },
+  { label: "Kernel Linux (partagé entre tous les containers)", hint: "≥ 4.6 pour cgroups v2 complet", accent: "dim" },
+  { label: "Hardware", hint: "CPU, RAM, réseau", accent: "dim" }
+]} caption="Pile complète d'un container : le kernel est partagé, l'isolation est purement logicielle" />
 
-   Isolation : kernel séparé           Isolation : namespaces + cgroups
-   Boot      : 30s+                    Boot      : ms
-   Footprint : 500MB+                  Footprint : qq MB
-   Sécurité  : forte (hyperviseur)     Sécurité  : kernel partagé = surface
-```
+### Les six namespaces qui font un container
 
-### Les ingrédients d'un container
+Le kernel Linux fournit actuellement sept types de namespaces (le septième étant `time`, apparu en 5.6). Un container "classique" en utilise six. Chaque namespace isole une vue différente du système :
 
-Un container = **6 namespaces** + **cgroups** + **rootfs séparé** + **capabilities/seccomp**.
+| Namespace | Syscall flag | Isolation |
+|---|---|---|
+| `PID` | `CLONE_NEWPID` | Arbre de processus : PID 1 dans le container ≠ PID 1 de l'hôte |
+| `Network` | `CLONE_NEWNET` | Interfaces, routes, iptables, sockets — réseau entièrement séparé |
+| `Mount` | `CLONE_NEWNS` | Table de montage FS — pivot_root ou chroot donne un rootfs différent |
+| `UTS` | `CLONE_NEWUTS` | hostname et domainname séparés |
+| `IPC` | `CLONE_NEWIPC` | Shared memory, sémaphores, queues de messages séparés |
+| `User` | `CLONE_NEWUSER` | Mapping UID/GID : root (0) dans le container = UID non-privilégié sur l'hôte |
 
-| Composant | Rôle |
-|---|---|
-| `PID ns` | Isolation des processus (PID 1 séparé) |
-| `Network ns` | Interfaces, routes, iptables séparés |
-| `Mount ns` | Vue du FS séparée |
-| `UTS ns` | hostname séparé |
-| `IPC ns` | shm, semaphores séparés |
-| `User ns` | UID/GID mappés (root container ≠ root hôte) |
-| `cgroups` | Limites CPU, RAM, IO, devices |
-| `chroot/pivot_root` | Racine FS différente |
-| `capabilities` | Subset des droits root (drop NET_ADMIN, etc.) |
-| `seccomp` | Whitelist des syscalls autorisés |
+La clé conceptuelle : un namespace ne **détruit** pas les ressources de l'hôte — il crée une **vue** différente. Un processus dans un PID namespace ne voit pas les PIDs de l'hôte, mais l'hôte voit ce processus avec son vrai PID. La frontière est à sens unique.
 
-## 🎯 Objectif
+### cgroups : les limites, pas l'isolation
+
+Les namespaces gèrent l'isolation (ce qu'on **voit**). Les cgroups (control groups) gèrent les limites (ce qu'on **consomme**). Sans cgroups, un processus isolé par namespaces peut quand même consommer 100% du CPU et toute la RAM de la machine — il ne voit pas ses voisins, mais il les étrangle.
+
+cgroups v2 (unified hierarchy) simplifie drastiquement le modèle v1 : une seule hiérarchie dans `/sys/fs/cgroup/`, chaque groupe expose des fichiers de contrôle pour CPU (`cpu.max`), RAM (`memory.max`), IO (`io.max`), nombre de processus (`pids.max`). Assigner un PID à un cgroup se fait en écrivant dans `cgroup.procs`. Le kernel prend en charge le reste.
+
+<Mermaid chart={`
+sequenceDiagram
+  participant Shell as Shell hôte
+  participant Kernel as Kernel Linux
+  participant Container as Process container
+  Shell->>Kernel: clone(CLONE_NEWPID | CLONE_NEWNET | CLONE_NEWNS | CLONE_NEWUTS | CLONE_NEWIPC)
+  Kernel-->>Container: fork dans nouveaux namespaces
+  Shell->>Kernel: write PID → /sys/fs/cgroup/mycontainer/cgroup.procs
+  Kernel-->>Container: limites CPU/RAM appliquées
+  Shell->>Kernel: chroot(/tmp/rootfs) + exec(/bin/bash)
+  Kernel-->>Container: bash démarre avec PID 1, rootfs isolé
+  Note over Container: Vue isolée du système
+  Note over Kernel: Voit le vrai PID, tous les namespaces
+`} caption="Séquence d'appels syscall pour créer un container à la main (ce que Docker automatise)" />
+
+## Objectif
 
 Construire un "container" à la main, sans Docker, en assemblant ces primitives une à une. À la fin tu :
 - Auras créé un mini rootfs Debian via `debootstrap`
@@ -113,7 +119,7 @@ Construire un "container" à la main, sans Docker, en assemblant ces primitives 
 - Auras limité la RAM et le CPU via cgroups v2
 - Pourras observer la différence depuis l'hôte avec `ps`, `nsenter`
 
-## 📋 Étape 1 — Créer un rootfs minimal
+## Étape 1 — Créer un rootfs minimal
 
 ```bash
 sudo apt install -y debootstrap
@@ -125,7 +131,9 @@ ls /tmp/mycontainer
 # bin etc lib usr var ... — un système Debian minimal
 ```
 
-## 📋 Étape 2 — Premier "container" avec unshare
+`debootstrap` construit un rootfs Debian complet dans un répertoire cible en téléchargeant les paquets depuis un miroir. L'option `--variant=minbase` produit le système le plus minimal possible (pas de recommandés, pas de locales, pas de man pages). C'est l'équivalent de ce que fait `docker pull debian:bookworm` : récupérer une archive tar d'un rootfs et l'extraire quelque part. La seule différence est que Docker le fait en mémoire et gère les layers en overlay.
+
+## Étape 2 — Premier "container" avec unshare
 
 ```bash
 sudo unshare \
@@ -133,6 +141,8 @@ sudo unshare \
   --mount-proc \
   chroot /tmp/mycontainer /bin/bash
 ```
+
+`unshare` appelle le syscall `unshare()` avec les flags correspondants, créant de nouveaux namespaces pour le processus courant. `--fork` est nécessaire pour le PID namespace : le processus doit `fork()` après `unshare()` pour que son enfant reçoive le PID 1 dans le nouveau namespace. `--mount-proc` monte `/proc` dans le nouveau mount namespace, ce qui permet à `ps` de fonctionner correctement. Sans ce montage, `/proc` est celui de l'hôte et `ps` verrait tous les processus système.
 
 Tu es dans un shell où :
 
@@ -153,11 +163,26 @@ ls /proc/12345/ns/
 # → tu vois les liens vers les namespaces (pid, net, mnt, uts, ipc)
 ```
 
-## 📋 Étape 3 — Limiter avec cgroups v2
+Le dossier `/proc/PID/ns/` liste les namespaces actifs du processus sous forme de liens symboliques. Comparer ces liens entre deux processus permet de savoir s'ils partagent ou non un namespace. C'est ce que font `nsenter` et Docker pour rejoindre le namespace d'un container existant.
+
+## Étape 3 — Limiter avec cgroups v2
+
+D'abord, vérifie que tu es bien en cgroups v2 — sinon les fichiers ci-dessous n'existeront pas sous la même forme :
 
 ```bash
-# Crée un cgroup
+# Doit afficher: cgroup2fs  (sinon tu es en v1 ou hybride)
+stat -fc %T /sys/fs/cgroup/
+```
+
+> 💡 Sur les distros récentes (Ubuntu 22+, Debian 12) le mode "unified" (cgroups v2 pur) est le défaut. Si tu es en mode hybride, ajoute `systemd.unified_cgroup_hierarchy=1` aux paramètres kernel et reboote.
+
+```bash
+# Crée un cgroup (le kernel génère les fichiers de contrôle dans le dossier)
 sudo mkdir /sys/fs/cgroup/mycontainer
+
+# Délègue les controllers cpu + memory au cgroup racine vers ses enfants.
+# Sans ça, cpu.max / memory.max peuvent ne pas apparaître dans le sous-cgroup.
+echo "+cpu +memory" | sudo tee /sys/fs/cgroup/cgroup.subtree_control
 
 # Limite à 100 Mo de RAM
 echo "100M" | sudo tee /sys/fs/cgroup/mycontainer/memory.max
@@ -165,27 +190,40 @@ echo "100M" | sudo tee /sys/fs/cgroup/mycontainer/memory.max
 # Limite à 20% d'un CPU
 echo "20000 100000" | sudo tee /sys/fs/cgroup/mycontainer/cpu.max
 # Format : "quota period" en microsecondes → 20ms toutes les 100ms = 20%
-
-# Lance ton "container" en y attachant le shell
-sudo unshare --pid --net --mount --uts --ipc --fork --mount-proc \
-  chroot /tmp/mycontainer /bin/bash &
-
-PID=$!
-echo $PID | sudo tee /sys/fs/cgroup/mycontainer/cgroup.procs
 ```
 
-Test la limite mémoire :
+Créer un répertoire sous `/sys/fs/cgroup/` crée automatiquement un nouveau cgroup dans la hiérarchie unifiée v2. Mais un point souvent oublié : un controller (cpu, memory, io...) n'est utilisable dans un sous-cgroup que s'il a été **délégué** par le parent via `cgroup.subtree_control`. C'est la règle "no internal process" de v2 — c'est pourquoi `cpu.max`/`memory.max` peuvent manquer si on saute cette étape. Écrire dans `memory.max` définit la limite haute de RAM du cgroup. Le format de `cpu.max` est `quota period` en microsecondes : `20000 100000` = 20 ms de CPU par fenêtre de 100 ms, soit 20 % d'un cœur. Écrire un PID dans `cgroup.procs` y déplace immédiatement ce processus et ses futurs enfants.
+
+Pour tester la limite mémoire, on installe `stress-ng` **dans le rootfs** avant de lancer le container — car le network namespace créé par `--net` n'a qu'une interface loopback, donc aucun accès Internet : un `apt install` à l'intérieur échouerait :
 
 ```bash
-# Dans le container, tente d'allouer 200 Mo
-apt install -y stress-ng
-stress-ng --vm 1 --vm-bytes 200M
-# → killed par OOM (cgroup limit)
+# Sur l'hôte : installe stress-ng DANS le rootfs (le netns du container n'a pas de réseau)
+sudo chroot /tmp/mycontainer /bin/bash -c "apt-get update && apt-get install -y stress-ng"
+
+# Lance le "container" en arrière-plan et attache-le au cgroup
+sudo unshare --pid --net --mount --uts --ipc --fork --mount-proc \
+  chroot /tmp/mycontainer /bin/bash -c 'sleep infinity' &
+
+# Récupère le PID du bash containerisé (le fils du unshare), pas celui du sudo
+sleep 1
+CPID=$(pgrep -n -f 'sleep infinity')
+echo "$CPID" | sudo tee /sys/fs/cgroup/mycontainer/cgroup.procs
 ```
 
-## 📋 Étape 4 — Sécurité : drop des capabilities
+> 💡 Risque si on écrit le mauvais PID : `$!` pointe sur le `sudo`/`unshare` parent, pas sur le bash dans le namespace. On placerait alors le mauvais processus dans le cgroup et la limite ne s'appliquerait pas au container. D'où le `pgrep` ciblé.
 
-Par défaut, root dans un container avec juste namespaces est… root sur l'hôte (presque). Pour vraiment isoler, on doit drop les capabilities dangereuses :
+```bash
+# Entre dans le container et tente d'allouer 200 Mo
+sudo nsenter --target "$CPID" --pid --net --mount --uts --ipc -- \
+  stress-ng --vm 1 --vm-bytes 200M --timeout 10s
+# → le worker est tué par l'OOM killer du cgroup (limite 100M dépassée)
+```
+
+Le kernel tue le processus via l'OOM killer dès que l'allocation dépasse `memory.max`. Ce n'est pas un signal envoyé de l'extérieur — c'est le kernel qui choisit quel processus tuer pour libérer de la mémoire **dans le cgroup**. Le processus reçoit `SIGKILL` ; impossible de l'intercepter ou de l'ignorer. Tu peux observer le compteur d'événements OOM côté hôte avec `cat /sys/fs/cgroup/mycontainer/memory.events` (champ `oom_kill`).
+
+## Étape 4 — Sécurité : drop des capabilities
+
+Linux divise les droits root en une quarantaine de capabilities distinctes (41 sur un kernel 6.x récent, la dernière étant `CAP_CHECKPOINT_RESTORE` = 40, listables via `capsh --print` ou `/proc/sys/kernel/cap_last_cap`) au lieu d'un droit tout-ou-rien. Un processus root dans un container monté à la main avec juste les namespaces garde quasiment toutes ses capabilities — notamment `CAP_SYS_ADMIN` (qui permet de monter des FS, de manipuler des namespaces, de lire `/proc/kcore`...), `CAP_NET_ADMIN` (modifier le routage, les règles iptables/nftables), `CAP_SYS_MODULE` (charger des modules kernel dans l'hôte). Ces capabilities sont autant de vecteurs d'évasion : `CAP_SYS_ADMIN` à lui seul suffit souvent à sortir du container. La bonne pratique est de toutes les retirer (drop all) puis de n'accorder que celles strictement nécessaires (allowlist, jamais blocklist).
 
 ```bash
 sudo apt install -y libcap2-bin
@@ -197,35 +235,56 @@ sudo capsh \
          chroot /tmp/mycontainer /bin/bash"
 ```
 
-Maintenant `mount` interne échoue, `iptables` aussi — la surface d'attaque est réduite.
+`capsh` (capability shell) permet de modifier le bounding set de capabilities avant d'exécuter un processus. `--drop=` retire ces capabilities du bounding set du processus et de tous ses descendants : elles ne pourront plus jamais être réacquises, même par un binaire `setuid root` exécuté à l'intérieur. Docker et containerd vont plus loin : par défaut ils **droppent toutes** les capabilities puis n'en réajoutent qu'une quinzaine via la spec OCI (`config.json`, champ `process.capabilities`), le tout complété par un profil seccomp qui bloque ~40 syscalls dangereux (`mount`, `reboot`, `keyctl`, `bpf`...).
 
-## 🧠 Ce que Docker ajoute par-dessus
+Pour vérifier l'effet, lance `capsh --print` dans le shell obtenu : `cap_sys_admin` ne doit plus figurer dans le `Bounding set`. Une tentative de `mount` ou de manipulation `nftables` à l'intérieur échouera avec `Operation not permitted`.
 
-Tout ce qu'on vient de faire à la main, Docker l'orchestre :
+> 💡 La défense la plus robuste reste le **user namespace** (`--user --map-root-user` avec `unshare`) : root (UID 0) dans le container y est mappé sur un UID non-privilégié de l'hôte. Même une évasion ne donne alors qu'un utilisateur ordinaire côté hôte. C'est le socle des "rootless containers" (Podman, Docker rootless).
 
-```
-   docker run -m 100m --cpus 0.2 ubuntu bash
+Nettoyage une fois les tests terminés :
 
-   ↓ sous le capot
-
-   1. Image fetch (rootfs)
-   2. clone() avec flags CLONE_NEWPID|CLONE_NEWNET|CLONE_NEWNS|...
-   3. mkdir + write cgroup limits
-   4. seccomp profile (default filter)
-   5. capabilities drop (defaults)
-   6. pivot_root + exec
+```bash
+# Quitte le container, puis supprime le cgroup côté hôte
+sudo rmdir /sys/fs/cgroup/mycontainer
 ```
 
-C'est ça la "magie" Docker : un wrapper ergonomique autour de ces syscalls. Quand tu sais ce qu'il fait, debugger Kubernetes devient infiniment plus simple.
+> Un cgroup ne peut être supprimé que s'il ne contient plus aucun processus (`cgroup.procs` vide) ; sors du container d'abord.
 
-## ✅ Validation
+## Ce que Docker ajoute par-dessus
+
+Tout ce qu'on vient de faire à la main, Docker l'orchestre via `runc`, l'implémentation de référence de la spec OCI. Le flux exact est :
+
+```bash
+docker run -m 100m --cpus 0.2 ubuntu bash
+```
+
+<Pipeline steps={[
+  { label: "Image fetch", hint: "pull + extract OCI layers (overlay2)", accent: "v" },
+  { label: "clone()", hint: "CLONE_NEWPID | NEWNET | NEWNS | NEWUTS | NEWIPC", accent: "c" },
+  { label: "cgroup limits", hint: "mkdir + write cpu.max, memory.max", accent: "a" },
+  { label: "seccomp + caps", hint: "drop 40+ syscalls, bounding set réduit", accent: "s" },
+  { label: "pivot_root", hint: "change rootfs vers l'image OCI", accent: "v" },
+  { label: "exec()", hint: "lance le processus cible (bash)", accent: "c" }
+]} caption="Ce que docker run fait en coulisses : séquence d'opérations kernel" />
+
+C'est ça la "magie" Docker : un wrapper ergonomique autour de ces syscalls. Quand tu sais ce qu'il fait, debugger Kubernetes devient infiniment plus simple — une `CrashLoopBackOff` ou un `OOMKilled` dans un pod k8s, c'est exactement les mêmes primitives qui entrent en jeu.
+
+<Stack layers={[
+  { label: "docker run / kubectl apply", hint: "interface utilisateur", accent: "v" },
+  { label: "containerd / CRI-O", hint: "Container Runtime Interface (CRI)", accent: "c" },
+  { label: "runc / crun", hint: "spec OCI : configure namespaces, cgroups, rootfs", accent: "a" },
+  { label: "clone() + unshare() + pivot_root()", hint: "syscalls Linux", accent: "s" },
+  { label: "Kernel : namespaces + cgroups + capabilities + seccomp", hint: "primitives d'isolation", accent: "dim" }
+]} caption="Chaîne complète de l'outil utilisateur jusqu'au syscall kernel" />
+
+## Validation
 
 - Tu peux entrer/sortir de ton container manuel via `unshare`
 - `ps` dedans ne voit que les processes du container
 - `stress-ng --vm-bytes 200M` est tué par OOM (limite cgroup respectée)
 - Tu peux lister les namespaces depuis l'hôte via `/proc/PID/ns/`
 
-## 🚀 Pour aller plus loin
+## Pour aller plus loin
 
 - **runc** : implémente la spec OCI au-dessus de ces primitives — c'est le runtime qu'utilisent Docker, containerd, k3s
 - **gVisor** : user-space kernel qui intercepte les syscalls pour fournir une isolation plus forte (au prix de la perf)

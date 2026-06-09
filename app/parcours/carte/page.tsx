@@ -14,9 +14,10 @@ export const metadata: Metadata = {
 type Status = 'completed' | 'started' | 'idle' | 'locked'
 
 const THEME_LABEL = {
-  Infrastructure: { col: 'var(--v)', code: 'infra',  label: 'Infrastructure' },
-  Cybersécurité:  { col: 'var(--c)', code: 'sec',    label: 'Cybersécurité'  },
-  Réseau:         { col: 'var(--a)', code: 'reseau', label: 'Réseau'         },
+  Infrastructure: { col: 'var(--v)', code: 'infra',    label: 'Infrastructure' },
+  Cybersécurité:  { col: 'var(--c)', code: 'sec',      label: 'Cybersécurité'  },
+  Réseau:         { col: 'var(--a)', code: 'reseau',   label: 'Réseau'         },
+  Systèmes:       { col: 'var(--s)', code: 'systemes', label: 'Systèmes'       },
 } as const
 
 /* SVG constants */
@@ -277,7 +278,7 @@ export default async function CartePage() {
 
   /* group by theme */
   const byTheme: Record<keyof typeof THEME_LABEL, LabMeta[]> = {
-    Infrastructure: [], Cybersécurité: [], Réseau: [],
+    Infrastructure: [], Cybersécurité: [], Réseau: [], Systèmes: [],
   }
   for (const l of labs) {
     const k = l.tag as keyof typeof THEME_LABEL

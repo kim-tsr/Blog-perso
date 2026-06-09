@@ -62,51 +62,47 @@ quiz:
 
 > 📚 **Série « Homelab from zero »** — Lab 3 / 5. Le cluster k3s+Cilium du Lab #2 sert de base. On va déplacer toute la config en Git.
 
-## 🧠 Théorie : qu'est-ce que GitOps exactement ?
+## 🧠 Théorie : GitOps — bien plus que "des YAML sur GitHub"
 
-GitOps n'est pas "j'ai mis mes YAML sur GitHub". C'est une **discipline opérationnelle** définie par 4 principes (OpenGitOps) :
+GitOps n'est pas une pratique informelle. C'est une **discipline opérationnelle** définie formellement par OpenGitOps avec 4 principes. Le point de départ est une frustration concrète : dans les équipes qui "font du CI/CD", il est courant qu'un déploiement en prod soit le résultat d'un `kubectl apply` lancé à la main par quelqu'un en urgence. Deux semaines plus tard, plus personne ne sait ce qui tourne réellement en production — le dépôt Git dit une chose, le cluster en fait une autre.
 
-| # | Principe | Implication |
+GitOps résout ce problème par un principe simple : **Git est la source de vérité unique, et un agent dans le cluster est responsable de faire converger l'état réel vers l'état Git**. Jamais l'inverse.
+
+| # | Principe | Ce que ça interdit |
 |---|---|---|
-| 1 | **Déclaratif** | On décrit *ce qu'on veut*, pas *comment l'obtenir*. YAML > scripts impératifs. |
-| 2 | **Versionné et immutable** | Git est la source de vérité unique. Toute modif passe par un commit. |
-| 3 | **Pulled automatiquement** | Un agent dans le cluster pull l'état désiré. Pas de push externe. |
-| 4 | **Réconciliation continue** | L'agent compare en boucle observé vs. désiré et corrige. |
+| 1 | **Déclaratif** | Les scripts impératifs (`kubectl run`, `helm upgrade --install` à la main) |
+| 2 | **Versionné et immutable** | Les modifications directes au cluster sans passer par un commit |
+| 3 | **Pull automatique** | Le CI qui pousse vers le cluster avec un kubeconfig externe |
+| 4 | **Réconciliation continue** | La config "en place" qui dérive silencieusement sans être détectée |
 
-### Push CI/CD vs Pull GitOps
+La conséquence la plus forte : un **rollback** redevient un `git revert`. L'historique Git *est* l'historique de production.
 
-```
-   Push (Jenkins, GitHub Actions → kubectl)
+## 🧠 Théorie : push-based vs pull-based — la question de sécurité
 
-   ┌────────────┐  kubectl apply   ┌─────────────┐
-   │ CI runner  │ ───────────────► │ Kubernetes  │
-   │            │   (credentials)  │  API        │
-   └────────────┘                  └─────────────┘
-        ▲
-        │ trigger
-        │
-   ┌────────────┐
-   │   Git      │
-   └────────────┘
+La distinction technique entre push et pull cache une différence de sécurité fondamentale. Dans un pipeline push, le runner CI (GitHub Actions, Jenkins) détient un **kubeconfig avec droits d'écriture** sur le cluster. Ce credential est exposé hors du cluster — dans des variables d'environnement CI, dans des logs, dans la mémoire du runner. Si le runner est compromis (dépendance malveillante, supply chain attack, worker partagé), l'attaquant obtient un accès direct au cluster.
 
-   ⚠️  CI a un kubeconfig → si compromis, cluster compromis
+Dans un pipeline pull, **aucun credential cluster ne sort du cluster**. ArgoCD lit Git (accès lecture seule sur un repo public, ou avec une deploy key à portée limitée) et applique lui-même les changements via l'API interne. La surface d'attaque est réduite à Git et au contrôle d'accès au dépôt.
 
+<Mermaid chart={`
+sequenceDiagram
+  participant Dev
+  participant Git
+  participant CI as CI Runner (externe)
+  participant K8s as API Server
+  participant Argo as ArgoCD (in-cluster)
 
-   Pull (ArgoCD, Flux)
+  Note over Dev,K8s: Modèle Push — credentials externes
+  Dev->>Git: git push
+  Git->>CI: webhook trigger
+  CI->>K8s: kubectl apply (kubeconfig stocké dans CI)
+  Note over CI,K8s: ⚠️ kubeconfig exposé hors cluster
 
-   ┌────────────┐                  ┌─────────────┐
-   │   Git      │ ◄────────── pull │  ArgoCD     │ in-cluster
-   │            │                  │   Agent     │
-   └────────────┘                  └──────┬──────┘
-                                          │ kubectl apply (local)
-                                          ▼
-                                   ┌─────────────┐
-                                   │ Kubernetes  │
-                                   │  API        │
-                                   └─────────────┘
-
-   ✅  Aucun credential cluster exposé hors du cluster
-```
+  Note over Dev,Argo: Modèle Pull GitOps — credentials internes
+  Dev->>Git: git push
+  Argo->>Git: poll (lecture seule)
+  Argo->>K8s: apply (local, in-cluster)
+  Note over Argo,K8s: ✅ aucun credential externe
+`} caption="Push CI/CD vs Pull GitOps : surface d'exposition des credentials" />
 
 ## 🎯 Objectif
 
@@ -117,40 +113,20 @@ GitOps n'est pas "j'ai mis mes YAML sur GitHub". C'est une **discipline opérati
 
 ## 📐 Architecture cible du lab #3
 
-```
-        ┌──────────────────────┐
-        │  Dépôt Git           │
-        │  homelab-gitops/     │
-        │  ├ apps/whoami/      │  ← source de vérité
-        │  └ infra/monitoring/ │
-        └──────────┬───────────┘
-                   │ pull (HTTPS / SSH)
-                   ▼
-   ┌─────────────────────────────────────────┐
-   │  Cluster k3s + Cilium                   │
-   │                                         │
-   │  ┌─────────────────────────────────┐    │
-   │  │       ArgoCD (in-cluster)       │    │
-   │  │                                 │    │
-   │  │   ┌─────────┐    ┌─────────┐    │    │
-   │  │   │ Repo    │───►│ Sync    │    │    │
-   │  │   │ Server  │    │ Loop    │    │    │
-   │  │   └─────────┘    │ (180s)  │    │    │
-   │  │                  └────┬────┘    │    │
-   │  │                       │ apply   │    │
-   │  │                       ▼         │    │
-   │  │   ┌─────────────────────────┐   │    │
-   │  │   │  Kubernetes API server  │   │    │
-   │  │   └────────────┬────────────┘   │    │
-   │  └────────────────┼─────────────────    │
-   │                   ▼                     │
-   │            ┌──────────────┐             │
-   │            │ ns demo      │             │
-   │            │ ├ whoami x2  │             │
-   │            │ └ networkpol │             │
-   │            └──────────────┘             │
-   └─────────────────────────────────────────┘
-```
+<Topology
+  nodes={[
+    { id: 'git', kind: 'cloud',   label: 'Dépôt Git',    hint: 'GitHub / GitLab', col: 1, row: 1, accent: 'a' },
+    { id: 'ars', kind: 'service', label: 'ArgoCD',        hint: 'in-cluster, ns argocd', col: 2, row: 1, accent: 'v' },
+    { id: 'api', kind: 'service', label: 'API Server k3s', hint: 'k3s-master', col: 3, row: 1, accent: 'c' },
+    { id: 'ns',  kind: 'service', label: 'ns demo',       hint: 'whoami x2 + NetworkPol', col: 3, row: 2, accent: 's' },
+  ]}
+  edges={[
+    { from: 'ars', to: 'git', kind: 'flow', label: 'pull (HTTPS/SSH)' },
+    { from: 'ars', to: 'api', kind: 'flow', label: 'kubectl apply (local)' },
+    { from: 'api', to: 'ns',  kind: 'flow', label: 'réconciliation' },
+  ]}
+  caption="ArgoCD pull Git et reconcilie le cluster — aucun credential externe requis"
+/>
 
 ## 📋 Étape 1 — Installer ArgoCD
 
@@ -166,6 +142,10 @@ kubectl -n argocd get secret argocd-initial-admin-secret \
   -o jsonpath="{.data.password}" | base64 -d ; echo
 ```
 
+L'installation d'ArgoCD déploie plusieurs composants distincts : `argocd-server` (API + UI), `argocd-repo-server` (clone et analyse les dépôts Git), `argocd-application-controller` (compare et réconcilie), et `argocd-dex-server` (authentification SSO). Le `kubectl wait --for=condition=available` bloque jusqu'à ce qu'`argocd-server` soit prêt, mais en pratique les autres composants démarrent en parallèle — attends encore 30 secondes après le wait avant de te connecter.
+
+Le mot de passe initial est stocké dans un Secret Kubernetes. Le pipeline `base64 -d` le décode (les Secrets Kubernetes sont encodés en base64, pas chiffrés — le chiffrement at-rest est une configuration séparée).
+
 Port-forward pour accéder à l'UI :
 
 ```bash
@@ -173,6 +153,8 @@ kubectl port-forward -n argocd svc/argocd-server 8080:443 --address=0.0.0.0
 ```
 
 → https://192.168.1.20:8080 (login : `admin`).
+
+`--address=0.0.0.0` expose le port-forward sur toutes les interfaces du master, pas seulement localhost — ce qui te permet de te connecter depuis ton poste via l'IP de la VM.
 
 ## 📋 Étape 2 — Préparer le dépôt Git
 
@@ -210,6 +192,12 @@ spec:
             limits:   { cpu: 200m, memory: 128Mi }
 ```
 
+Quelques points importants dans ce YAML :
+
+- `selector.matchLabels` et `template.metadata.labels` doivent correspondre exactement — c'est ainsi que le Deployment sait quels pods il contrôle. Une incohérence ici cause une erreur de validation ou des comportements inattendus.
+- `requests` et `limits` sont **tous les deux nécessaires** : `requests` dit au scheduler ce que le pod a besoin de façon garantie (il ne sera jamais placé sur un node qui n'a pas ces ressources libres), et `limits` dit au kernel (via cgroups) de tuer le processus s'il dépasse ce plafond. Sans `requests`, le scheduler place les pods aléatoirement. Sans `limits`, un pod en fuite peut asphyxier tout le node.
+- L'image est épinglée sur `:v1.10` plutôt que `:latest` — en GitOps, `latest` est une anti-pattern car deux syncs identiques pourraient déployer des versions différentes.
+
 Commit + push.
 
 ## 📋 Étape 3 — Connecter le dépôt à ArgoCD
@@ -238,6 +226,12 @@ spec:
       - CreateNamespace=true
 ```
 
+La ressource `Application` est le cœur d'ArgoCD. `source` décrit **où** est l'état désiré (dépôt + branche + sous-dossier), `destination` décrit **où** l'appliquer (cluster + namespace). ArgoCD supporte plusieurs sources par Application (multi-source), utile pour combiner Helm chart + values depuis un dépôt séparé.
+
+`prune: true` et `selfHeal: true` sont deux mécanismes orthogonaux :
+- `prune` surveille les **suppressions depuis Git** : si tu supprimes un Service du dépôt, ArgoCD supprime aussi la ressource du cluster. Sans `prune`, les ressources supprimées de Git restent en production indéfiniment.
+- `selfHeal` surveille les **modifications manuelles du cluster** : si tu `kubectl scale` ou edites un pod à la main, ArgoCD détecte la divergence et ré-applique l'état Git. C'est la réconciliation continue.
+
 ```bash
 # Nettoie d'abord le déploiement manuel du Lab #2
 kubectl delete -n demo deployment whoami
@@ -256,21 +250,15 @@ kubectl -n demo get deploy whoami        # → 5 replicas
 kubectl -n demo get deploy whoami        # → 2 replicas (ArgoCD a recollé)
 ```
 
-### Cycle de réconciliation visualisé
+### Cycle de réconciliation ArgoCD
 
-```
-   t=0s     git push
-              │
-   t=10s     ArgoCD repo-server poll
-              │
-   t=15s     compute diff désiré ↔ observé
-              │
-   t=20s     APPLY changements via API server
-              │
-   t=25s     Kubernetes converge → état Healthy
-              │
-   t=180s    nouveau cycle (boucle infinie)
-```
+<Pipeline steps={[
+  { label: 'git push', hint: 'commit sur main', accent: 'v' },
+  { label: 'Repo poll', hint: 'défaut 180s (ou webhook)', accent: 'c' },
+  { label: 'Diff', hint: 'désiré ↔ observé', accent: 'a' },
+  { label: 'Apply', hint: 'kubectl via API', accent: 's' },
+  { label: 'Healthy', hint: 'état convergé', accent: 'v' },
+]} caption="Cycle de réconciliation ArgoCD — poll Git toutes les ~180s par défaut" />
 
 ## 📋 Étape 5 — Rollback par revert Git
 
@@ -285,7 +273,11 @@ git push
 
 → ArgoCD remet `whoami`. **Ton `git log` est ton historique de production.**
 
+`git revert HEAD` crée un *nouveau* commit qui inverse les changements du dernier commit, sans réécrire l'historique. C'est important : en GitOps, tu ne fais jamais `git reset --hard` en production (ça réécrit l'historique et peut désynchroniser d'autres contributeurs). Le revert est traçable — tu vois dans le log "revert du déploiement nginx".
+
 ## 🧠 Pourquoi le pattern app-of-apps
+
+Le pattern app-of-apps résout un problème de bootstrapping : comment déployer tous tes composants ArgoCD depuis Git, y compris ArgoCD lui-même ? La réponse : une Application "root" qui pointe vers un dossier contenant d'autres Applications.
 
 ```
 homelab-gitops/
@@ -297,7 +289,7 @@ homelab-gitops/
     └── falco.yaml       ← Application falco (lab #5)
 ```
 
-Tu appliques `root-app.yaml` une seule fois → ArgoCD découvre les Applications et les déploie en cascade. On l'utilisera aux Labs #4 et #5.
+Tu appliques `root-app.yaml` une seule fois → ArgoCD découvre les Applications enfants et les déploie en cascade. Résultat : un cluster vierge peut être entièrement bootstrappé avec un seul `kubectl apply -f bootstrap/root-app.yaml`. On l'utilisera aux Labs #4 et #5.
 
 ## 🔬 Snapshot post-lab
 

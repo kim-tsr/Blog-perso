@@ -29,7 +29,7 @@ quiz:
       - "Le mesh est plus simple à configurer"
       - "Hub-and-spoke ne marche pas avec WireGuard"
     correct: 1
-    explanation: "Hub-and-spoke (Tailscale par défaut) simplifie la config (chacun parle au hub) mais centralise les pannes et ajoute un hop. Mesh = chaque nœud connaît N-1 peers, latence minimale, résilience maximale. Tradeoff : config O(N²) à maintenir → Ansible obligatoire."
+    explanation: "Hub-and-spoke simplifie la config (chacun ne parle qu'au hub) mais centralise les pannes et ajoute un hop. Mesh = chaque nœud connaît N-1 peers, latence minimale, résilience maximale. Tradeoff : config O(N²) à maintenir → Ansible recommandé. NB : Tailscale fait en réalité du peer-to-peer (mesh) avec des relais DERP en repli quand le NAT bloque le direct ; le hub-and-spoke pur correspond plutôt à un serveur WireGuard central type Pi-hole/road-warrior."
   - question: "À quoi sert 'PersistentKeepalive = 25' ?"
     options:
       - "Force la reconnexion toutes les 25 secondes"
@@ -58,70 +58,82 @@ quiz:
 
 ## 🧠 Théorie : WireGuard, le VPN qui tient en 4000 lignes
 
-WireGuard est un protocole VPN moderne, intégré au kernel Linux depuis 5.6 (2020). Ses choix de design tranchent avec OpenVPN/IPsec :
+WireGuard est un protocole VPN moderne, intégré au kernel Linux depuis 5.6 (2020). Sa philosophie de design est radicalement différente des VPNs de la génération précédente : là où IPsec et OpenVPN ont cherché à être des couteaux suisses (supportant des dizaines d'algorithmes, modes, et cas d'usage), WireGuard a fait le choix opposé — **minimalisme radical et opinionated design**.
 
-```
-   OpenVPN                            WireGuard
-   ─────────────                      ─────────────
-   ~600 000 LOC (incl. OpenSSL)      ~4 000 LOC
-   N algos cryptos négociés           1 algo fixé pour chaque rôle
-   TCP ou UDP                         UDP only
-   État connexion riche               Stateless (handshake éphémère)
-   PKI X.509 (CA, certs, CRL)         Échange de clés publiques
-   Démarre lent (~1s handshake)       Démarre instantané (~1 RTT)
-```
+Le résultat : ~4 000 lignes de code noyau (contre ~600 000 pour OpenVPN + OpenSSL), un seul algorithme par rôle cryptographique (pas de négociation possible), et un handshake en ~1 round-trip (contre plusieurs secondes pour OpenVPN ou IPsec avec IKE). Ce minimalisme n'est pas une limitation — c'est une feature de sécurité. Une codebase petite est auditable, chaque ligne peut être revue, chaque bug peut être trouvé.
+
+### Le protocole Noise : la fondation cryptographique
+
+WireGuard est construit sur le **Noise Protocol Framework** (Trevor Perrin, 2016). Noise est un framework de spécification de protocoles de handshake à clés statiques et éphémères, qui garantit plusieurs propriétés de sécurité par construction :
+
+- **Forward secrecy** : les clés de session sont éphémères (Curve25519 ECDH à chaque handshake). Compromettre la clé statique d'un pair ne permet pas de déchiffrer les sessions passées.
+- **Identity hiding** : les clés statiques sont transmises chiffrées sous les clés éphémères — un observateur passif ne voit pas les identités des pairs.
+- **Mutual authentication** : les deux pairs prouvent qu'ils connaissent leur clé privée sans l'envoyer.
+
+Le handshake WireGuard utilise le pattern Noise_IKpsk2 : Initiator-Known (l'initiateur connaît la clé publique du répondeur), avec une clé pré-partagée optionnelle (PSK) pour résistance quantique.
 
 ### Cryptographie utilisée (toutes fixées, pas de négociation)
 
-| Rôle | Algorithme |
-|---|---|
-| Échange de clés | Curve25519 (ECDH) |
-| Chiffrement symétrique | ChaCha20 |
-| Authentification message | Poly1305 |
-| Hashing | BLAKE2s |
-| HKDF | BLAKE2s |
-| Anti-DoS | SipHash24 |
+| Rôle | Algorithme | Pourquoi ce choix |
+|---|---|---|
+| Échange de clés | Curve25519 (ECDH) | Rapide, résistant side-channel, bien audité |
+| Chiffrement symétrique | ChaCha20-Poly1305 (AEAD) | Performant sans AES-NI, authentification intégrée |
+| Hashing / HKDF | BLAKE2s | Plus rapide que SHA-256 sur 32-bit/ARM |
+| Cookies anti-DoS | SipHash24 | Petit, rapide, résistant aux flooding attacks |
 
-Pas de négociation = pas de downgrade attack. Si un algo casse demain, on bump le protocole. Simple, brutal, sûr.
+Pas de négociation = pas de **downgrade attack**. Dans les protocoles qui négocient les algorithmes (TLS 1.2, OpenVPN, IKEv1), un attaquant actif peut forcer la sélection d'un algorithme faible. Avec WireGuard, il n'y a rien à négocier. Si un algorithme casse demain, on fait une nouvelle version du protocole — mais cette décision est globale, pas exploitable au cas par cas.
+
+### Le handshake WireGuard en détail
+
+<Mermaid chart={`
+sequenceDiagram
+    participant I as Initiateur (N1)
+    participant R as Répondeur (N2)
+    Note over I,R: Pré-requis : chacun connaît la clé publique statique de l'autre
+    I->>I: Génère une clé éphémère Ei (Curve25519)
+    I->>R: msg1 type=1 — Ei_pub en clair,\nidentité statique de I chiffrée,\ntag d'authentification mac1/mac2
+    R->>R: Vérifie mac1/mac2, déchiffre l'identité de I\nGénère sa clé éphémère Er
+    R->>I: msg2 type=2 — Er_pub en clair,\npayload vide chiffré, mac1/mac2
+    Note over I,R: 4 produits ECDH combinés via HKDF/BLAKE2s\n→ mêmes clés de session Tx (I vers R) et Rx (R vers I)
+    I->>R: Données chiffrées (ChaCha20-Poly1305)
+    R->>I: Données chiffrées
+    Note over I,R: Renouvellement (rekey) toutes les ~2 min\nou avant 2^60 messages
+`} caption="Handshake WireGuard (Noise IKpsk2) : 1 aller-retour, authentification mutuelle, forward secrecy" />
 
 ### Topologie : full-mesh vs hub-and-spoke
 
-```
-   Full-mesh                       Hub-and-spoke
-   ─────────                       ──────────────
-        N1                              N1
-       /  \                              │
-      /    \                             │
-    N2 ──── N3                  N2 ──── HUB ──── N3
-                                       (SPOF)
-   
-   3 peers/nœud                    1 peer/nœud (spoke)
-   Latence directe                 +1 hop systématique
-   Résilient                       Hub down = mesh KO
-   Config O(N²)                    Config O(N)
-```
+<Topology
+  nodes={[
+    { id: 'n1', kind: 'host', label: 'N1\n10.50.0.1', col: 1, row: 1, accent: 'a' },
+    { id: 'n2', kind: 'host', label: 'N2\n10.50.0.2', col: 2, row: 0, accent: 'a' },
+    { id: 'n3', kind: 'host', label: 'N3\n10.50.0.3', col: 3, row: 1, accent: 'a' },
+  ]}
+  edges={[
+    { from: 'n1', to: 'n2', kind: 'sync', label: 'WG tunnel' },
+    { from: 'n2', to: 'n3', kind: 'sync', label: 'WG tunnel' },
+    { from: 'n1', to: 'n3', kind: 'sync', label: 'WG tunnel' },
+  ]}
+  caption="Maillage WireGuard full-mesh : chaque paire de nœuds est connectée directement, sans hub central"
+/>
 
 Pour 3-10 nœuds : full-mesh. Au-delà : hub-and-spoke avec multiple hubs (mode Tailscale DERP) ou orchestration (Headscale).
+
+| Critère | Full-mesh | Hub-and-spoke |
+|---|---|---|
+| Résilience | Aucun SPOF | Hub = SPOF |
+| Latence | Directe (1 hop) | +1 hop via hub |
+| Complexité config | O(N²) pairs | O(N) pairs |
+| Scalabilité | Jusqu'à ~50 nœuds | Illimitée avec HA hub |
+
+### Pourquoi UDP et non TCP ?
+
+WireGuard utilise exclusivement UDP, ce qui peut sembler contre-intuitif pour un protocole censé être fiable. La raison est le problème du **TCP meltdown** : tunneler du TCP dans du TCP crée deux instances concurrentes des algorithmes de contrôle de congestion. Quand le lien est dégradé, les deux niveaux TCP réagissent simultanément — retransmissions du TCP interne, puis du TCP externe — amplifiant les problèmes jusqu'à l'effondrement du débit.
+
+UDP est connectionless et sans état de congestion : le TCP applicatif encapsulé gère lui-même sa fiabilité, sans interférence du tunnel. Les applications UDP (DNS, QUIC, médias) passent directement. L'inconvénient : certains firewalls corporate bloquent UDP non-standard. Solution : `udp2raw` (encapsule WireGuard dans du raw IP ou ICMP) ou `wstunnel` (encapsule dans du WebSocket 443).
 
 ## 🎯 Objectif
 
 Établir un **mesh** WireGuard où chaque nœud parle directement à chaque autre — pas de point central. Idéal pour un homelab distribué ou un cluster Kubernetes multi-site.
-
-## 📐 Architecture cible
-
-```
-            Internet
-       ┌────────┴────────┐
-       │        │        │
-       ▼        ▼        ▼
-      N1       N2       N3
-   10.50.0.1  .0.2   .0.3
-       ▲        ▲        ▲
-       └────────┼────────┘
-                │
-   Chaque flèche = tunnel WG chiffré bout-en-bout
-   Pas de centralisation, pas de SPOF
-```
 
 ## 📋 Étape 1 — Générer les paires de clés
 
@@ -129,9 +141,15 @@ Sur chaque nœud (N1, N2, N3) :
 
 ```bash
 sudo apt install -y wireguard
+# umask 077 : les fichiers créés ne seront lisibles que par leur propriétaire
+umask 077
 wg genkey | tee privatekey | wg pubkey > publickey
 cat privatekey publickey
 ```
+
+`wg genkey` génère une clé privée Curve25519 de 32 octets, encodée en base64 (44 caractères, le dernier étant un `=` de padding). `wg pubkey` en dérive la clé publique correspondante par multiplication scalaire sur la courbe (l'opération est à sens unique : impossible de remonter à la clé privée depuis la publique). La clé publique peut être partagée librement — elle s'utilise dans les sections `[Peer]` de tous les autres nœuds. La clé privée reste sur la machine et ne doit jamais transiter en clair.
+
+> **Pourquoi `umask 077` ?** Sans lui, `privatekey` peut être créé en `0644` (lisible par tout utilisateur de la machine). Une clé privée WireGuard exposée = un attaquant peut usurper le nœud et déchiffrer les futures sessions. `wg-quick` refuse d'ailleurs de démarrer si `wg0.conf` est trop permissif — donnez-lui `chmod 600`.
 
 Notez les 3 clés publiques — vous en aurez besoin sur tous les nœuds.
 
@@ -162,20 +180,27 @@ Endpoint   = <IP_PUB_N3>:51820
 PersistentKeepalive = 25
 ```
 
+La section `[Interface]` configure l'identité et l'écoute de ce nœud. `Address = 10.50.0.1/24` assigne l'adresse IP sur l'interface virtuelle `wg0`. `ListenPort = 51820` est le port UDP sur lequel WireGuard écoute les paquets entrants (handshakes et données chiffrées).
+
+Chaque section `[Peer]` représente un pair connu. La `PublicKey` est la clé publique Curve25519 du pair — WireGuard l'utilise pour chiffrer les paquets destinés à ce pair (ECDH) et pour vérifier l'authenticité de ses messages. L'`Endpoint` est son adresse réseau publique (IP:port UDP). Sans `Endpoint`, WireGuard attend que le pair initie le contact (utile pour les peers mobiles dont l'IP change).
+
 Sur **chaque** autre nœud, créez un fichier équivalent avec son IP interne et les peers correspondants.
 
 > 💡 La clé d'un mesh : **chaque** nœud doit avoir **N-1** peers déclarés. Pas de hiérarchie.
 
-### Comprendre AllowedIPs
+### Comprendre AllowedIPs : le Cryptokey Routing
 
-`AllowedIPs = 10.50.0.2/32` côté N1 pour N2 signifie :
-- **Sortant** : tout paquet vers 10.50.0.2 part dans ce tunnel
-- **Entrant** : tout paquet déchiffré de ce peer DOIT venir de 10.50.0.2, sinon jeté
+`AllowedIPs = 10.50.0.2/32` côté N1 pour N2 est la directive la plus importante de WireGuard. Elle a un double rôle :
+
+- **Routage sortant** : tout paquet dont la destination matche 10.50.0.2/32 est encapsulé et chiffré pour ce peer. WireGuard crée automatiquement une entrée dans la table de routage du kernel.
+- **Filtre cryptographique entrant** : un paquet déchiffré avec la clé de ce peer DOIT avoir une adresse source qui matche `AllowedIPs`, sinon il est jeté silencieusement. Cela rend le **spoofing impossible** — un peer ne peut pas envoyer un paquet avec l'adresse source d'un autre peer.
 
 Si vous voulez router un sous-réseau entier via N2 (ex: 192.168.10.0/24 derrière N2) :
 ```ini
 AllowedIPs = 10.50.0.2/32, 192.168.10.0/24
 ```
+
+> ⚠️ Router un sous-réseau implique deux choses côté N2, sinon les paquets sont reçus mais jamais relayés : activer le forwarding IP (`sysctl -w net.ipv4.ip_forward=1`, à rendre persistant dans `/etc/sysctl.conf`) et, si N2 fait du NAT vers le sous-réseau, ajouter une règle `MASQUERADE`. Le `Address = 10.50.0.1/24` du `[Interface]` crée par ailleurs une route directe vers tout `10.50.0.0/24` — c'est pourquoi on garde les `AllowedIPs` des peers en `/32` : éviter que deux peers revendiquent le même `/24` et entrent en conflit de Cryptokey Routing.
 
 ## 📋 Étape 3 — Démarrer le tunnel
 
@@ -185,6 +210,8 @@ Sur les 3 nœuds :
 sudo wg-quick up wg0
 sudo systemctl enable wg-quick@wg0
 ```
+
+`wg-quick` est un utilitaire shell qui interprète le fichier `wg0.conf`, crée l'interface réseau virtuelle (type `wireguard`), configure les adresses IP, applique les règles de routage pour les `AllowedIPs`, et démarre le démon WireGuard. `systemctl enable wg-quick@wg0` crée un service systemd pour démarrer le tunnel automatiquement après un reboot.
 
 Ouvrez le port UDP 51820 dans le firewall :
 
@@ -215,6 +242,10 @@ peer: ABcd...PUB_N2
   persistent keepalive: every 25 seconds
 ```
 
+Le champ `latest handshake` est votre indicateur de santé principal. WireGuard déclenche un nouveau handshake quand l'émetteur tente d'envoyer des données alors que la clé de session courante a plus de ~2 minutes (`REKEY_AFTER_TIME`), et une session totalement inactive est purgée après ~3 minutes (`REJECT_AFTER_TIME`). Concrètement : sur un lien qui transmet en continu, le `latest handshake` ne devrait jamais dépasser ~2 minutes. Un handshake bien plus ancien (ou un compteur qui se fige) sur un lien censé être actif signale un problème de connectivité UDP (firewall, NAT asymétrique, route cassée, horloge désynchronisée). Un `transfer` non nul et croissant confirme que des données chiffrées circulent dans les deux sens.
+
+> 💡 WireGuard est « silencieux » par design : tant qu'aucune donnée n'est à transmettre, aucun handshake n'est renouvelé. C'est pour cela que `PersistentKeepalive` est nécessaire derrière NAT — sans trafic, rien ne maintient le mapping ouvert.
+
 ## 📋 Étape 5 — Test de résilience
 
 Coupez WireGuard sur N1, puis testez depuis N2 vers N3 :
@@ -224,7 +255,7 @@ Coupez WireGuard sur N1, puis testez depuis N2 vers N3 :
 ping 10.50.0.3
 ```
 
-Ça doit fonctionner — c'est tout l'intérêt du mesh par rapport à un hub-and-spoke.
+Ça doit fonctionner — c'est tout l'intérêt du mesh par rapport à un hub-and-spoke. Dans un hub-and-spoke, si le hub est down, N2 ne peut plus atteindre N3 (même si N2 et N3 sont tous deux up et ont une connexion Internet). Dans le full-mesh, la route N2 → N3 est directe — N1 n'est pas dans le chemin.
 
 ## 📋 Étape 6 — Mesure de perf
 
@@ -236,7 +267,15 @@ iperf3 -s
 iperf3 -c 10.50.0.3 -t 30
 ```
 
-Vous devriez avoir **~95% du débit hors tunnel**. ChaCha20 est optimisé pour les CPU modernes, l'overhead est minime même sans AES-NI.
+Vous devriez observer un débit proche du lien sous-jacent (souvent 85–95 % selon le CPU et le MTU). ChaCha20-Poly1305 est l'unique algorithme AEAD (Authenticated Encryption with Associated Data) de WireGuard — il n'y a **pas** de négociation possible vers AES-GCM, contrairement à TLS ou IPsec. Ce choix est délibéré : ChaCha20 reste très performant sur les CPU dépourvus d'instructions AES-NI (VPS ARM, Raspberry Pi, petits CPU embarqués) là où AES s'effondre, tout en restant compétitif sur x86_64. La portabilité prime sur le micro-gain potentiel d'AES-NI.
+
+L'overhead par paquet de WireGuard est bien défini : 20 octets d'en-tête IPv4 (40 en IPv6) + 8 octets UDP + 16 octets d'en-tête WireGuard + 16 octets de tag d'authentification Poly1305 = **60 octets** sur IPv4. C'est pour cela que la MTU recommandée de l'interface `wg0` est **1420** (1500 − 60 − marge). Si vous laissez le MTU par défaut sans clamp, des paquets TCP pleine taille seront fragmentés ou perdus (notamment quand le Path MTU Discovery est cassé par un firewall qui drope l'ICMP). Solution robuste : forcer le clamp du MSS TCP.
+
+```bash
+# Adapter le MSS TCP au MTU réel du tunnel (évite la fragmentation)
+sudo iptables -t mangle -A FORWARD -p tcp --tcp-flags SYN,RST SYN \
+  -j TCPMSS --clamp-mss-to-pmtu
+```
 
 ## 🧠 Pitfalls courants
 

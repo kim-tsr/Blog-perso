@@ -57,34 +57,45 @@ quiz:
 
 ## 🧠 Théorie : les 3 piliers de l'observabilité
 
-```
-   ┌─────────────────────────────────────────────────────┐
-   │              Application instrumentée               │
-   └──┬──────────────┬──────────────┬───────────────────┘
-      │              │              │
-      ▼              ▼              ▼
-   ┌──────┐      ┌──────┐      ┌──────┐
-   │Metrics│      │ Logs │      │Traces│
-   │      │      │      │      │      │
-   │ NUM  │      │ TXT  │      │ FLOW │
-   │ /sec │      │ events│     │ E2E  │
-   └──┬───┘      └──┬───┘      └──┬───┘
-      ▼             ▼             ▼
-   ┌──────┐      ┌──────┐      ┌──────┐
-   │Prom. │      │ Loki │      │Tempo │
-   │ TSDB │      │ chunks│     │trace │
-   └──┬───┘      └──┬───┘      └──┬───┘
-      └──────────┬──┴─────────────┘
-                 ▼
-            ┌─────────┐
-            │ Grafana │   ← UI unifiée
-            └─────────┘
-```
+L'observabilité est la capacité à **comprendre l'état interne d'un système depuis ses sorties externes**. En pratique, on distingue trois types de sorties complémentaires, chacune répondant à une question différente.
 
-**Quand utiliser quoi :**
-- **Metrics** → "combien" et "à quel taux" (latence p99, erreurs/s, CPU)
-- **Logs** → "que s'est-il passé exactement" (stack trace, request id, payload)
-- **Traces** → "où ça bloque dans la chaîne" (request → 5 services → DB)
+Les **métriques** (Prometheus) sont des valeurs numériques horodatées : taux de requêtes, latence p99, utilisation CPU. Elles répondent à "combien" et "à quel rythme". Elles sont compactes, indexables, et permettent l'alerting sur des seuils. Leur limite : elles ne disent pas *pourquoi* une valeur a changé.
+
+Les **logs** (Loki) sont des événements textuels : stack traces, requêtes HTTP, messages d'erreur. Ils répondent à "que s'est-il passé exactement". Ils sont verbeux et coûteux à indexer — c'est pourquoi Loki indexe uniquement les labels (app, namespace, pod) et non le texte lui-même. On filtre d'abord par label, puis on grep dans le texte : 10× moins cher qu'ElasticSearch pour 80% des cas Kubernetes.
+
+Les **traces** (Tempo, Jaeger) sont des graphes de causalité entre services : une requête entrante génère N appels internes, chacun avec une durée. Elles répondent à "où ça bloque dans la chaîne". Pour ce homelab, on ne déploie pas Tempo (complexité supplémentaire), mais l'architecture ci-dessous en réserve la place.
+
+<Stack layers={[
+  { label: 'Grafana', hint: 'UI unifiée metrics + logs + traces', accent: 'v' },
+  { label: 'Prometheus TSDB · Loki chunks · Tempo traces', hint: 'stockages spécialisés', accent: 'c' },
+  { label: 'Exporters · Promtail · OTel Collector', hint: 'collecteurs de signal', accent: 'a' },
+  { label: 'Applications Kubernetes (pods, nodes, kubelet)', hint: 'sources de signal', accent: 's' },
+]} caption="Pile d'observabilité : collecte → stockage → visualisation" />
+
+## 🧠 Théorie : Prometheus — le modèle pull et les time-series
+
+Prometheus fonctionne en mode **pull** : c'est lui qui interroge les endpoints `/metrics` de tes applications, toutes les X secondes. Ce modèle est contra-intuitif (on pourrait penser que l'app "envoie" ses métriques) mais présente des avantages : Prometheus contrôle le rythme, il détecte immédiatement si une cible est DOWN (pas de réponse), et les targets n'ont pas besoin de connaître l'adresse de Prometheus.
+
+Chaque série temporelle (time-series) est identifiée par un nom de métrique et un ensemble de **labels** : `http_requests_total{method="POST", status="200", service="whoami"}`. Les labels sont la clé de PromQL : tu peux agréger, filtrer, grouper. La règle d'or : garder les labels à faible cardinalité (pas d'IP, pas d'user ID, pas de timestamp dans un label — sinon Prometheus explose en RAM).
+
+<Mermaid chart={`
+sequenceDiagram
+  participant App as Application (pods)
+  participant SM as ServiceMonitor
+  participant Prom as Prometheus
+  participant Graf as Grafana
+  participant AM as Alertmanager
+
+  Prom->>SM: découverte des targets (CRD)
+  loop toutes les 30s
+    Prom->>App: GET /metrics
+    App->>Prom: text/plain (exposition format)
+  end
+  Graf->>Prom: PromQL query
+  Prom->>Graf: séries temporelles
+  Prom->>AM: alerte (règle franchie)
+  AM->>AM: grouping / dedup / routing
+`} caption="Prometheus : cycle pull, ServiceMonitor, alerting via Alertmanager" />
 
 ## 🎯 Objectif
 
@@ -119,7 +130,7 @@ spec:
   source:
     repoURL: https://prometheus-community.github.io/helm-charts
     chart: kube-prometheus-stack
-    targetRevision: 65.5.0
+    targetRevision: 75.6.0   # épingle une version testée ; vérifie la dernière sur artifacthub.io
     helm:
       values: |
         grafana:
@@ -127,6 +138,10 @@ spec:
           service:
             type: NodePort
             nodePort: 30080
+        alertmanager:
+          service:
+            type: NodePort
+            nodePort: 30093
         prometheus:
           prometheusSpec:
             retention: 7d
@@ -144,7 +159,16 @@ spec:
     syncOptions: [ CreateNamespace=true ]
 ```
 
-Commit + push. ArgoCD détecte la nouvelle app sous 30 sec.
+Quelques choix dans ces values Helm méritent une explication :
+
+- `type: NodePort` avec `nodePort: 30080` expose Grafana directement sur le port 30080 de chaque node — accessible via `http://192.168.1.20:30080` sans ingress. C'est le compromis homelab : pas de LoadBalancer externe, pas de certificat TLS géré, mais accessible immédiatement. (Pour rappel, la plage NodePort autorisée par défaut est `30000-32767`.)
+- On expose aussi Alertmanager sur `30093` : c'est l'UI qu'on consultera au Lab #5 (`http://192.168.1.20:30093`) pour voir arriver les alertes Falco.
+- `retention: 7d` limite la rétention Prometheus à 7 jours. Sur un homelab avec 10 Go alloués, c'est le bon équilibre. Prometheus stocke les time-series compressées (~1-3 bytes/sample) mais une semaine de métriques Kubernetes complètes peut atteindre plusieurs Go.
+- `volumeClaimTemplate` demande un PersistentVolumeClaim de 10 Gi pour la TSDB Prometheus. Sans ça, les métriques sont dans l'`emptyDir` du pod et disparaissent au restart. k3s fournit la StorageClass `local-path` par défaut, donc le PVC se provisionne tout seul sur le disque du node — pas de configuration de stockage supplémentaire requise.
+
+> 💡 **Versions de charts** : les `targetRevision` épinglés ici sont des versions testées au moment de l'écriture. Les charts Helm évoluent vite ; avant de copier, vérifie la dernière version stable sur [artifacthub.io](https://artifacthub.io) et adapte. Épingler une version exacte (jamais `*` ni `latest`) est une règle GitOps — deux syncs doivent toujours déployer le même bundle.
+
+Commit + push. ArgoCD détecte la nouvelle app au prochain cycle de réconciliation (≤ 3 min, ou immédiatement si tu déclenches un *Refresh* manuel dans l'UI).
 
 ## 📋 Étape 2 — Vérifier le déploiement
 
@@ -152,6 +176,8 @@ Commit + push. ArgoCD détecte la nouvelle app sous 30 sec.
 kubectl -n monitoring get pods
 # Tous les pods doivent être Running
 ```
+
+`kube-prometheus-stack` déploie une dizaine de composants : Prometheus, Grafana, Alertmanager, kube-state-metrics (métriques sur les objets Kubernetes), node-exporter (métriques système par node). Attends que tous soient `Running` avant de continuer — les CRDs (PrometheusRule, ServiceMonitor) doivent être installées avant de passer aux étapes suivantes.
 
 Grafana est exposé sur le NodePort `30080`. Ouvre http://192.168.1.20:30080 (login `admin` / `changeme`).
 
@@ -186,22 +212,30 @@ spec:
     automated: { prune: true, selfHeal: true }
 ```
 
+Loki-stack déploie deux composants :
+
+- **Loki** : le backend de stockage et d'indexation des logs. Il ne fait que stocker les chunks compressés et les index de labels — il n'indexe *jamais* le texte brut.
+- **Promtail** : le collecteur, déployé en DaemonSet sur chaque node. Il lit les fichiers de logs de tous les pods (`/var/log/pods/...`), ajoute les labels Kubernetes (namespace, pod, container), et envoie à Loki. C'est transparent pour les applications.
+
+`grafana.enabled: false` désactive l'instance Grafana de loki-stack car tu en as déjà une via kube-prometheus-stack. Avoir deux Grafanas sur le même namespace serait une collision de service.
+
 Commit + push.
 
 Dans Grafana → **Connections → Add data source → Loki** → URL `http://loki:3100` → Save & Test.
 
-## 📋 Étape 4 — Instrumenter whoami
+## 📋 Étape 4 — Scraper les métriques réseau de whoami via Cilium
 
-Le projet `traefik/whoami` n'expose pas de métriques. Pour ce lab, on monitore depuis le **niveau réseau** via Cilium (déjà installé au Lab #2) :
+Le projet `traefik/whoami` n'expose pas d'endpoint `/metrics` applicatif. Plutôt que de modifier l'image, on observe le trafic de whoami depuis le **plan réseau** : Cilium (Lab #2) expose déjà des métriques de flux sur le port `9962` de chaque agent, grâce aux flags `prometheus.enabled` et `hubble.metrics.enabled` activés à l'installation. Il reste à dire à Prometheus de les scraper :
 
 ```yaml
-# Dans homelab-gitops/apps/whoami/
-# Ajoute ServiceMonitor pour ServiceMesh metrics
+# Dans homelab-gitops/apps/whoami/ — servicemonitor-cilium.yaml
 apiVersion: monitoring.coreos.com/v1
 kind: ServiceMonitor
 metadata:
   name: cilium-agent
   namespace: monitoring
+  labels:
+    release: kube-prometheus-stack   # ← clé : permet à Prometheus de l'adopter
 spec:
   selector:
     matchLabels:
@@ -209,9 +243,18 @@ spec:
   namespaceSelector:
     matchNames: [ kube-system ]
   endpoints:
-    - port: prometheus
+    - port: prometheus      # port nommé 9962 sur le Service cilium-agent
       interval: 30s
 ```
+
+Un `ServiceMonitor` est une Custom Resource installée par kube-prometheus-stack. Prometheus Operator surveille tous les ServiceMonitors du cluster et met à jour dynamiquement la configuration de scraping — sans redémarrer Prometheus ni éditer son configmap à la main.
+
+- `labels.release: kube-prometheus-stack` est **indispensable** : par défaut, le Prometheus déployé par ce chart n'adopte que les ServiceMonitors portant le label de sa `release` (le `serviceMonitorSelector`). Sans ce label, ton ServiceMonitor est ignoré silencieusement — c'est l'erreur n°1 des débutants. Vérifie le nom exact avec `kubectl get prometheus -n monitoring -o yaml | grep -A3 serviceMonitorSelector`.
+- `selector.matchLabels: {k8s-app: cilium}` pointe vers le Service `cilium-agent` exposé dans `kube-system`.
+- `namespaceSelector` autorise Prometheus à scraper hors de son propre namespace.
+- `port: prometheus` est le **nom** du port (9962) tel que défini sur le Service Cilium — on référence par nom, pas par numéro, pour rester robuste si le port change.
+
+> 💡 Plus simple en pratique : Cilium sait créer ce ServiceMonitor lui-même si tu installes avec `--set prometheus.serviceMonitor.enabled=true`. On le fait ici à la main pour comprendre le mécanisme.
 
 ## 📋 Étape 5 — Dashboard custom
 
@@ -239,7 +282,10 @@ Dans Grafana → **Dashboards → New → Import → JSON** :
 }
 ```
 
-(simplifié — adapte selon les labels réellement remontés par Cilium).
+Les deux requêtes PromQL illustrent deux patterns différents :
+
+- `kube_deployment_status_replicas{...}` est une **gauge** (valeur instantanée) exposée par kube-state-metrics. Pas de `rate()` — tu veux la valeur actuelle, pas un taux.
+- `sum(rate(cilium_forward_bytes_total{}[1m]))` calcule le **taux d'octets** (bytes/seconde) en lissant sur une fenêtre glissante de 1 minute. `cilium_forward_bytes_total` est un **counter** (toujours croissant) — `rate()` est obligatoire pour extraire une valeur utile. `sum()` agrège tous les labels (tous les pods, toutes les directions).
 
 ## 📋 Étape 6 — Première alerte
 
@@ -263,7 +309,22 @@ spec:
             summary: "whoami n'a aucune replica dispo"
 ```
 
+`for: 1m` est capital : l'alerte ne passe en "firing" qu'après **1 minute continue** où la condition est vraie. Sans ce délai, un restart de pod (quelques secondes à 0 replica) déclencherait immédiatement une alerte critique — un bruit insupportable. En prod SRE, on dit "burn rate" : l'alerte doit représenter un problème réel, pas un événement transitoire normal.
+
+`labels: { severity: critical }` est ce qu'Alertmanager utilisera pour router : tu peux configurer une route `severity=critical → PagerDuty` et `severity=warning → Slack` sans modifier la règle elle-même.
+
 Test : `kubectl scale -n demo deploy whoami --replicas=0` → après 1 min, l'alerte passe firing dans Alertmanager.
+
+> ⚠️ **Attention au self-heal ArgoCD** : whoami est désormais géré par ArgoCD (Lab #3) avec `selfHeal: true`. Ton `scale --replicas=0` sera annulé sous ~3 min, ce qui résout l'alerte tout seul. C'est exactement le comportement attendu — mais pour un test propre, fais le scale juste après avoir lancé la commande et observe la fenêtre avant que ArgoCD ne recolle, ou suspends temporairement l'app dans l'UI ArgoCD.
+
+## 🔬 Snapshot post-lab
+
+```bash
+# Sur Proxmox — la stack de monitoring est lourde, snapshote avant le Lab #5
+for id in 100 101; do
+  qm snapshot $id base-after-lab4 --description "Fin Lab #4 — observabilité en place"
+done
+```
 
 ## ✅ Validation
 

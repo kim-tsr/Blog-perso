@@ -13,6 +13,7 @@ tools:
   - "OpenSSH"
   - "fail2ban"
   - "ssh-audit"
+sandboxable: true
 quiz:
   - question: "Pourquoi Ed25519 est-il préféré à RSA 2048 pour une nouvelle clé SSH ?"
     options:
@@ -58,26 +59,45 @@ quiz:
 
 ## 🧠 Théorie : pourquoi SSH est la première cible
 
-Tout serveur public sur Internet voit en quelques minutes des milliers de tentatives de login sur le port 22. C'est un bruit de fond constant alimenté par des botnets (Mirai-like, mass scanners). Sans hardening :
+Tout serveur public sur Internet voit en quelques minutes des milliers de tentatives de login sur le port 22. C'est un bruit de fond constant alimenté par des botnets (Mirai-like, mass scanners). Le problème n'est pas uniquement que le port 22 est exposé — c'est que la configuration par défaut d'OpenSSH a été conçue pour l'accessibilité, pas pour la sécurité. Sans hardening, vous ouvrez trois vecteurs d'attaque distincts qui se combinent dangereusement.
 
-- **MaxAuthTries** par défaut = 6 → ~6 essais de password par connexion
-- **PermitRootLogin yes** par défaut sur certains AMI → cible idéale (compte connu, droits illimités)
-- **PasswordAuthentication yes** → si un user a un mot de passe faible, c'est perdu
+Le premier vecteur est l'**authentification par mot de passe**. Les botnets SSH testent des millions de combinaisons identifiant/mot de passe par heure (credential stuffing). Même un mot de passe « fort » de 12 caractères représente ~78 bits d'entropie maximum — attaquable par force brute avec assez de temps et de ressources. Une clé cryptographique Ed25519 représente 256 bits : la différence est astronomique (10^77 opérations).
+
+Le deuxième vecteur est l'**accès root direct**. Avec `PermitRootLogin yes` (valeur par défaut sur certaines images cloud), l'attaquant n'a qu'à trouver un seul identifiant — root — dont les droits sont illimités. Toute compromission réussie est immédiatement critique.
+
+Le troisième vecteur est la **surface cryptographique**. OpenSSH supporte par défaut des algorithmes anciens (diffie-hellman-group14, hmac-sha1) pour assurer la compatibilité avec de vieux clients. Ces algorithmes sont affaiblis ou cassés — un audit régulier avec `ssh-audit` est indispensable.
+
+### Types de clés : Ed25519 vs RSA
+
+OpenSSH supporte plusieurs types de clés asymétriques. Les deux choix courants en 2024+ sont Ed25519 et RSA, mais ils ne sont pas équivalents :
+
+| Aspect | RSA 2048 | RSA 4096 | Ed25519 |
+|---|---|---|---|
+| Sécurité (bits) | ~112 bits | ~140 bits | ~128 bits |
+| Taille clé privée | 1679 octets | 3247 octets | 64 octets |
+| Signature | ~0.5 ms | ~1.8 ms | ~0.05 ms |
+| Résistance side-channel | Faible (sans précautions) | Faible | Forte (par construction) |
+| Recommandé pour | Compatibilité legacy | Non | Tout nouveau déploiement |
+
+Ed25519 est basé sur la courbe de Edwards tordue sur le corps fini GF(2^255 - 19). Ses propriétés mathématiques garantissent une implémentation constante en temps, ce qui élimine naturellement les attaques par canal auxiliaire (timing attacks) sans précautions spéciales dans le code.
+
+> Ne générez plus de clés RSA 2048 pour un nouvel usage. Migrez les existantes vers Ed25519 lors de la prochaine rotation.
 
 ### Modèle de menace SSH
 
-```
-   Internet ─► port 22 ─► sshd
-                            │
-       ┌────────────────────┼────────────────────┐
-       ▼                    ▼                    ▼
-   Brute force          Vol de clé           0day sshd
-   (password)           (~/.ssh/id_rsa       (rare mais
-       │                 exposé)              critique)
-       ▼                    ▼                    ▼
-   fail2ban             Passphrase           Patch rapide
-   no-passwords         + agent              minimiser surface
-```
+<Mermaid chart={`
+flowchart TD
+    internet([Internet / botnets]) -->|port 22| sshd[sshd daemon]
+    sshd --> bf[Brute force password]
+    sshd --> keytheft[Vol de clé privée]
+    sshd --> zeroday[0day OpenSSH]
+    bf --> r1[fail2ban + no-passwords]
+    keytheft --> r2[Passphrase + ssh-agent]
+    zeroday --> r3[Patch rapide + WireGuard devant]
+    r1 --> defense[Défense en profondeur]
+    r2 --> defense
+    r3 --> defense
+`} caption="Vecteurs d'attaque SSH et contre-mesures correspondantes" />
 
 ### Comparaison clés vs passwords
 
@@ -87,6 +107,27 @@ Tout serveur public sur Internet voit en quelques minutes des milliers de tentat
 | Brute force réaliste | ~10^15 ops (faisable) | impossible (10^77) |
 | Volabilité | shoulder surf, keylogger | fichier sur disque (chiffrable) |
 | Rotation | manuelle, friction | scriptable |
+
+### Comment fonctionne l'authentification par clé
+
+Le protocole d'authentification par clé publique dans SSH est un challenge-response asymétrique. Le serveur connaît votre clé publique (dans `~/.ssh/authorized_keys`). Au moment du login, il génère un nombre aléatoire, le chiffre avec votre clé publique, et attend que le client le déchiffre avec sa clé privée. Ni le mot de passe ni la clé privée ne transitent jamais sur le réseau — seule la preuve de possession circule.
+
+<Pipeline steps={[
+  "Client envoie sa clé publique",
+  "Serveur génère un challenge aléatoire",
+  "Client signe le challenge avec sa clé privée",
+  "Serveur vérifie la signature avec la clé publique",
+  "Authentification accordée"
+]} />
+
+### La combinaison fail2ban + MaxAuthTries
+
+Ces deux mécanismes opèrent à des niveaux différents et se complètent :
+
+- **`MaxAuthTries 3`** agit au niveau de la connexion TCP individuelle. Si un attaquant ouvre une seule connexion, il n'a que 3 tentatives avant que sshd la coupe. Mais rien n'empêche d'ouvrir une nouvelle connexion immédiatement après.
+- **fail2ban** surveille `/var/log/auth.log` et compte les échecs **toutes connexions confondues**. Après `maxretry` échecs dans une fenêtre `findtime`, il bannit l'adresse IP source au niveau du firewall (iptables/nftables). L'attaquant ne peut même plus établir une connexion TCP.
+
+La défense en profondeur réelle, c'est les deux ensemble.
 
 ## 🎯 Objectif
 
@@ -101,9 +142,11 @@ ssh-keygen -t ed25519 -C "kim@laptop"
 ssh-copy-id user@serveur
 ```
 
+La commande `ssh-keygen -t ed25519` génère une paire de clés Ed25519. Le paramètre `-C` est un commentaire libre (pratique pour identifier la clé dans `authorized_keys`). `ssh-copy-id` copie votre clé publique dans `~/.ssh/authorized_keys` sur le serveur via une connexion SSH classique (encore avec mot de passe à ce stade).
+
 Testez : `ssh user@serveur` doit fonctionner **sans mot de passe**.
 
-> 💡 Toujours mettre une **passphrase** sur la clé privée + utiliser `ssh-agent` pour ne la taper qu'une fois par session.
+> 💡 Toujours mettre une **passphrase** sur la clé privée + utiliser `ssh-agent` pour ne la taper qu'une fois par session. Sans passphrase, voler le fichier `~/.ssh/id_ed25519` suffit pour compromettre l'accès.
 
 ## 📋 Étape 2 — Durcir sshd_config
 
@@ -114,17 +157,17 @@ PermitRootLogin no
 PasswordAuthentication no
 PubkeyAuthentication yes
 KbdInteractiveAuthentication no
-ChallengeResponseAuthentication no
 AllowUsers kim
 MaxAuthTries 3
 LoginGraceTime 20
 ClientAliveInterval 300
 ClientAliveCountMax 2
-Protocol 2
 X11Forwarding no
 AllowTcpForwarding no
 PermitTunnel no
 ```
+
+> 💡 Deux directives volontairement absentes ici, contrairement à beaucoup de vieux tutoriels : `Protocol 2` (SSHv1 a été **retiré du code** d'OpenSSH depuis la 7.6 en 2017 — la directive est désormais inconnue et fait râler `sshd -t`) et `ChallengeResponseAuthentication` (devenu, depuis OpenSSH 8.7, un simple alias déprécié de `KbdInteractiveAuthentication` — en mettre une seule suffit). Mettre les deux est au mieux redondant, au pire source d'erreurs.
 
 > 💡 Gardez une seconde session SSH ouverte avant de redémarrer le service — c'est votre filet de sécurité si la config est mauvaise.
 
@@ -135,14 +178,29 @@ sudo systemctl restart ssh
 
 ### Anatomie de chaque directive
 
-```
+Chaque directive a une raison d'être précise — ce n'est pas une liste de paramètres magiques à copier-coller aveuglément :
+
+```text
 PermitRootLogin no         ─► Pas de login direct root, on passe par sudo
+                              (si root est compromis = game over)
 PasswordAuthentication no  ─► Clés uniquement = élimine 90% du bruit
-AllowUsers kim             ─► Whitelist explicite
-MaxAuthTries 3             ─► Limite essais/connexion
+                              (doit être APRÈS avoir déployé votre clé)
+AllowUsers kim             ─► Whitelist explicite — même si /etc/passwd
+                              contient 50 comptes de services, seul kim peut
+                              se connecter via SSH
+MaxAuthTries 3             ─► Limite essais par connexion TCP
+                              (combiné à fail2ban = double barrière)
 LoginGraceTime 20          ─► Connexion non terminée en 20s = close
-ClientAliveInterval 300    ─► Détecte sessions zombies (NAT drop)
+                              (réduit la charge des connexions fantômes)
+ClientAliveInterval 300    ─► Ping de keepalive toutes les 5 min
+                              (détecte sessions zombies après NAT drop)
+X11Forwarding no           ─► Désactive le forwarding X11 = vecteur
+AllowTcpForwarding no          d'escalade privilèges si compromis
 ```
+
+La directive `AllowUsers` mérite une attention particulière : elle implémente un **whitelist positif**. Le modèle de sécurité inverse (tout autoriser sauf une liste noire) est fragile — un compte de service oublié reste accessible. Avec `AllowUsers kim`, seul `kim` peut se connecter, point.
+
+Pour les équipes, préférez `AllowGroups ssh-users` et gérez l'appartenance au groupe — plus maintenable qu'une liste nominative dans sshd_config.
 
 ## 📋 Étape 3 — Installer fail2ban
 
@@ -150,44 +208,66 @@ ClientAliveInterval 300    ─► Détecte sessions zombies (NAT drop)
 sudo apt install -y fail2ban
 sudo tee /etc/fail2ban/jail.d/ssh.local <<EOF
 [sshd]
-enabled = true
-port    = ssh
+enabled  = true
+port     = ssh
 maxretry = 4
 bantime  = 1h
 findtime = 10m
+backend  = systemd
 EOF
 sudo systemctl restart fail2ban
 sudo fail2ban-client status sshd
 ```
 
+Ce fichier de configuration crée un **jail** (prison) spécifique à SSH. `maxretry = 4` signifie qu'à partir du 4e échec d'authentification dans une fenêtre de 10 minutes (`findtime = 10m`) depuis la même IP, fail2ban déclenche un ban de 1 heure (`bantime = 1h`) : il insère une règle dans le firewall (`nftables` par défaut sur Debian 11+/Ubuntu 22.04+, `iptables` sur les systèmes plus anciens) qui rejette tout trafic entrant depuis cette IP.
+
+> 💡 `backend = systemd` est important : sur Debian 12 / Ubuntu 22.04+, sshd journalise dans **journald**, pas dans `/var/log/auth.log` (souvent absent par défaut). Avec le backend par défaut basé sur le fichier, le jail resterait silencieux car il surveillerait un fichier vide. Vérifiez avec `journalctl -u ssh` que les logs y sont bien.
+
+Pour un durcissement plus agressif contre les scanners persistants, augmentez `bantime` à `24h` ou même `7d`, et réduisez `maxretry` à `3`. La valeur de `findtime` doit être suffisamment longue pour attraper les attaques lentes (slow brute force).
+
 ### Tester le banissement
 
-Depuis une autre machine, faites volontairement 5 tentatives échouées :
+Depuis une autre machine, faites volontairement 5 tentatives échouées (avec `maxretry=4`, le ban tombe au-delà du 4e échec) :
 
 ```bash
-for i in {1..5}; do ssh notexist@serveur; done
+for i in {1..5}; do ssh -o BatchMode=yes notexist@serveur; done
+# -o BatchMode=yes : pas de prompt interactif, échec immédiat → 5 entrées dans le journal
 # Puis sur le serveur :
 sudo fail2ban-client status sshd
 # Banned IP list: 1.2.3.4
 ```
 
+> 💡 Testez depuis une IP **jetable** (et jamais celle de votre poste d'admin) : vous risquez de vous bannir vous-même pour `bantime`. En cas de pépin : `sudo fail2ban-client set sshd unbanip <votre-ip>`.
+
 ## 📋 Étape 4 — Auditer la cryptographie
 
 ```bash
-pip install --user ssh-audit
-~/.local/bin/ssh-audit serveur
+# Recommandé sur Debian/Ubuntu récents (PEP 668 bloque `pip install --user`) :
+pipx install ssh-audit        # ou : sudo apt install ssh-audit  (paquet dispo depuis Debian 12 / Ubuntu 22.10)
+# Alternative sans installation, via snap :  sudo snap install ssh-audit
+ssh-audit serveur             # ssh-audit serveur:22  pour un port custom
 ```
 
-L'outil note les algorithmes de chiffrement, MAC et KEX. Visez **A** ou **A+**. Désactivez les algorithmes faibles dans `sshd_config` :
+L'outil `ssh-audit` se connecte en tant que client et interroge le serveur sur ses capacités cryptographiques (KEX, ciphers, MACs, host key algorithms) sans s'authentifier — il lit uniquement le banner et la négociation d'algorithmes. Il note chaque algorithme proposé selon son état actuel : recommandé, déprécié, ou cassé. Il signale aussi les CVE connues affectant la version d'OpenSSH détectée (utile pour repérer un serveur non patché, ex : la CVE-2024-6387 « regreSSHion »).
+
+Visez **A** ou **A+**. Désactivez les algorithmes faibles dans `sshd_config` :
 
 ```text
-KexAlgorithms curve25519-sha256,curve25519-sha256@libssh.org
+KexAlgorithms sntrup761x25519-sha512@openssh.com,curve25519-sha256,curve25519-sha256@libssh.org
 Ciphers chacha20-poly1305@openssh.com,aes256-gcm@openssh.com
 MACs hmac-sha2-512-etm@openssh.com,hmac-sha2-256-etm@openssh.com
 HostKeyAlgorithms ssh-ed25519,rsa-sha2-512
+PubkeyAcceptedAlgorithms ssh-ed25519,rsa-sha2-512
 ```
 
-> ⚠️ Ces algorithmes excluent les vieux clients (OpenSSH < 6.5). Vérifie que tes scripts CI les supportent.
+Ces directives restreignent les algorithmes disponibles aux seuls algorithmes modernes :
+- `sntrup761x25519-sha512@openssh.com` : échange de clés **hybride post-quantique** (combine Streamlined NTRU Prime et X25519), activé par défaut depuis OpenSSH 9.0 et indispensable pour viser un A+ ssh-audit en 2025+. Il protège contre le « harvest now, decrypt later » (un attaquant qui capture le trafic aujourd'hui pour le déchiffrer avec un futur ordinateur quantique).
+- `curve25519-sha256` : échange de clés classique (ECDH sur Curve25519), conservé pour les clients sans support PQ.
+- `chacha20-poly1305` / `aes256-gcm` : chiffrement symétrique **AEAD** (Authenticated Encryption with Associated Data) — chiffre et authentifie en une passe.
+- `*-etm@openssh.com` : MAC en mode **Encrypt-then-MAC**, qui authentifie le ciphertext (et non le plaintext), évitant des classes d'attaques sur l'ordre chiffrement/MAC.
+- `PubkeyAcceptedAlgorithms` : limite aussi les *types de clés client* acceptés (sinon un client pourrait s'authentifier avec une signature `ssh-rsa`/SHA-1, dépréciée).
+
+> ⚠️ Ces algorithmes excluent les vieux clients (OpenSSH < 6.5, et `sntrup761x25519` exige OpenSSH ≥ 9.0 côté client). Vérifie que tes scripts CI et tes jump hosts les supportent avant de restreindre, sinon tu te coupes l'accès.
 
 ## 📋 Étape 5 — Bonus : 2FA TOTP
 
@@ -204,18 +284,41 @@ auth required pam_google_authenticator.so
 
 Et dans `sshd_config` :
 
-```
+```text
 AuthenticationMethods publickey,keyboard-interactive
+KbdInteractiveAuthentication yes
+UsePAM yes
 ```
 
+> ⚠️ À l'étape 2 on avait mis `KbdInteractiveAuthentication no`. Pour le TOTP, il faut le **repasser à `yes`** : c'est le canal par lequel sshd demande le code via PAM. Sans ça, `keyboard-interactive` échoue et vous vous bloquez l'accès. `PasswordAuthentication` reste à `no` (le code TOTP transite par keyboard-interactive, pas par l'auth mot de passe).
+
+La directive `AuthenticationMethods publickey,keyboard-interactive` impose une **double authentification** : d'abord la clé publique (SSH standard), puis un second facteur via PAM (ici le TOTP Google Authenticator). La virgule signifie « les deux sont requis dans cet ordre » — pas l'un ou l'autre. Le TOTP génère un code à 6 chiffres recalculé toutes les 30 secondes, dérivé d'un secret partagé et de l'heure Unix via HMAC-SHA1 (RFC 6238, qui généralise le HOTP de la RFC 4226). Corollaire : le serveur et le téléphone doivent avoir leurs **horloges synchronisées** (NTP) — un décalage > 30 s fait échouer la validation.
+
+> 💡 Pensez à conserver les **codes de secours** (scratch codes) affichés par `google-authenticator` dans un coffre : si vous perdez le téléphone, ils sont le seul moyen de récupérer l'accès sans toucher au serveur.
+
 Désormais : clé SSH **+** code TOTP requis.
+
+<Mermaid chart={`
+sequenceDiagram
+    participant C as Client SSH
+    participant S as sshd
+    participant P as PAM/TOTP
+    C->>S: Connexion TCP
+    S->>C: Challenge clé publique
+    C->>S: Signature (clé privée)
+    S->>C: Clé OK — demande 2ème facteur
+    C->>S: Code TOTP (6 chiffres)
+    S->>P: Vérification TOTP
+    P->>S: Code valide
+    S->>C: Session ouverte
+`} caption="Flux MFA SSH : clé publique + TOTP obligatoires en séquence" />
 
 ## 🧠 Anti-patterns
 
 ❌ **Changer le port (security through obscurity)** : ne ralentit que les scans naïfs. Les scanners Shodan trouvent tous les ports.
 ❌ **Mettre `PermitRootLogin without-password`** : oui c'est mieux que `yes`, mais `no` est meilleur — root devrait être inutilisable directement.
 ❌ **Laisser DSA / RSA 1024** : cassés cryptographiquement. ssh-audit le signale.
-❌ **fail2ban sans persistance** : à chaque reboot le compteur reset → l'attaquant a un free pass.
+❌ **Compter sur fail2ban seul comme défense** : c'est un ralentisseur, pas une barrière (il agit *après* coup, sur des logs). La vraie protection reste « clés uniquement ». fail2ban persiste désormais ses bans dans une base SQLite (`dbpurge`/`dbfile`) et les réapplique au boot — vérifiez que `dbfile` n'est pas désactivé (`= :memory:`), sinon vous perdez l'historique des bans à chaque redémarrage.
 
 ## ✅ Validation
 

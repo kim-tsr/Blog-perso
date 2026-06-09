@@ -57,27 +57,33 @@ quiz:
 
 ## 🧠 Théorie : pourquoi un hyperviseur de type 1 ?
 
-Avant de cliquer "Installer", il faut comprendre **ce qu'on installe**. Proxmox VE est un hyperviseur de **type 1** : son noyau (Debian + KVM) tourne directement sur le matériel, sans OS hôte intermédiaire.
+Avant de cliquer "Installer", il faut comprendre **ce qu'on installe**. Proxmox VE est un hyperviseur de **type 1** (bare-metal) : son noyau (Debian + KVM) tourne directement sur le matériel, sans couche OS intermédiaire. À l'opposé, VirtualBox ou VMware Workstation sont de **type 2** — ils s'exécutent comme n'importe quel processus au-dessus de ton macOS ou Ubuntu.
 
-```
-   Type 1 (Proxmox, ESXi)                Type 2 (VirtualBox, VMware Workstation)
+La différence n'est pas que théorique. Avec un type 2, chaque appel I/O d'une VM traverse l'hyperviseur ET l'OS hôte avant d'atteindre le matériel. Cela double les contextes, multiplie les couches réseau, et crée un point de défaillance unique : si l'OS hôte crashe ou redémarre, toutes tes VMs disparaissent. Sur un type 1, le "host" *est* le kernel de l'hyperviseur — plus compact, moins exposé.
 
-   ┌───┐ ┌───┐ ┌───┐                    ┌───┐ ┌───┐
-   │VM │ │VM │ │VM │                    │VM │ │VM │
-   └─┬─┘ └─┬─┘ └─┬─┘                    └─┬─┘ └─┬─┘
-     └─────┼─────┘                         └─────┘
-        ┌──▼──┐                           ┌──▼──┐
-        │ KVM │  ← Hypervisor             │ App │  ← Hypervisor (process)
-        └──┬──┘                           └──┬──┘
-           │                            ┌──▼──┐
-           │                            │ OS  │  ← OS hôte (Linux, macOS, Windows)
-           │                            └──┬──┘
-        ┌──▼──┐                           ┌──▼──┐
-        │ HW  │                           │ HW  │
-        └─────┘                           └─────┘
-```
+Pour un homelab DevSecOps en mode "always-on", le type 1 est le seul choix raisonnable. Tu veux pouvoir rebooter sans peur, snapshotter sans interruption, et avoir une densité maximale sur le matériel modeste d'un mini PC.
 
-**Conséquence pratique** : densité 2-3× supérieure, latence d'I/O réduite, et pas de risque que ton OS hôte plante et tue tes VMs. C'est le bon choix pour un homelab serveur en mode "always-on".
+<Stack layers={[
+  { label: 'VMs (VM 100, 101, 110)', hint: 'workloads isolés', accent: 'v' },
+  { label: 'KVM + QEMU', hint: 'hyperviseur type 1', accent: 'c' },
+  { label: 'Kernel Debian 12 (Proxmox)', hint: 'base minimale', accent: 'a' },
+  { label: 'Matériel (CPU, RAM, NVMe)', hint: 'mini PC', accent: 's' },
+]} caption="Pile Proxmox VE : hyperviseur type 1 bare-metal" />
+
+## 🧠 Théorie : ZFS — le pourquoi du comment
+
+ZFS n'est pas juste un système de fichiers. C'est la fusion de trois couches qu'on assemble habituellement à la main avec des outils séparés : le système de fichiers (ext4, xfs), le gestionnaire de volumes logiques (LVM), et la gestion du RAID (mdadm). En les unissant, ZFS peut garantir **l'intégrité end-to-end** : chaque bloc est accompagné d'un checksum SHA-256, vérifié à chaque lecture. La corruption silencieuse — fréquente sur les SSD consumer de qualité moyenne — est détectée immédiatement.
+
+Pour des VMs, les **snapshots copy-on-write** changent la donne. Un snapshot COW est créé en temps constant (< 1 ms), quel que soit la taille du disque : seuls les blocs *modifiés depuis le snapshot* sont copiés, jamais la totalité. Résultat : tu peux prendre un snapshot avant chaque étape risquée et rollback instantanément si tu casses ton cluster au lab suivant.
+
+La **compression lz4** transparente apporte en général 20-40 % de gain d'espace sur des systèmes de fichiers VM typiques, sans mesurable overhead CPU.
+
+<Stack layers={[
+  { label: 'Applications (VMs Debian)', hint: 'client du stockage', accent: 'v' },
+  { label: 'ZFS dataset tank/vms', hint: 'snapshots + compression + checksums', accent: 'c' },
+  { label: 'ZFS pool "tank"', hint: 'gestion RAID + thin provisioning', accent: 'a' },
+  { label: 'Disque NVMe / SSD', hint: 'second disque 500 Go+', accent: 's' },
+]} caption="ZFS : FS + LVM + RAID + intégrité en un seul outil" />
 
 ## 🎯 Objectif
 
@@ -89,33 +95,22 @@ Poser les fondations matérielles et logicielles. À la fin, tu auras :
 
 ## 📐 Architecture cible du lab #1
 
-```
-   Réseau LAN 192.168.1.0/24
-              │
-              ▼
-   ┌───────────────────────────┐
-   │   Mini PC homelab         │
-   │   192.168.1.10            │
-   │                           │
-   │   ┌──── Proxmox ────┐     │
-   │   │  KVM + ZFS      │     │
-   │   │                 │     │
-   │   │  ┌────────────┐ │     │
-   │   │  │ k3s-master │─┼─────┼──► 192.168.1.20
-   │   │  └────────────┘ │     │
-   │   │  ┌────────────┐ │     │
-   │   │  │ k3s-worker │─┼─────┼──► 192.168.1.21
-   │   │  └────────────┘ │     │
-   │   │  ┌────────────┐ │     │
-   │   │  │ services   │─┼─────┼──► 192.168.1.30
-   │   │  └────────────┘ │     │
-   │   └─────────────────┘     │
-   │                           │
-   │   SSD système 256 Go      │
-   │   ZFS pool "tank" sur     │
-   │   second disque 500 Go+   │
-   └───────────────────────────┘
-```
+<Topology
+  nodes={[
+    { id: 'lan', kind: 'cloud', label: 'LAN', hint: '192.168.1.0/24', col: 1, row: 2, accent: 's' },
+    { id: 'prx', kind: 'host', label: 'Proxmox VE', hint: '192.168.1.10', col: 2, row: 2, accent: 'v' },
+    { id: 'm',   kind: 'service', label: 'k3s-master', hint: '192.168.1.20', col: 3, row: 1, accent: 'c' },
+    { id: 'w',   kind: 'service', label: 'k3s-worker', hint: '192.168.1.21', col: 3, row: 2, accent: 'c' },
+    { id: 's',   kind: 'service', label: 'services',   hint: '192.168.1.30', col: 3, row: 3, accent: 'a' },
+  ]}
+  edges={[
+    { from: 'lan', to: 'prx', kind: 'flow' },
+    { from: 'prx', to: 'm',   kind: 'flow', label: 'KVM + ZFS' },
+    { from: 'prx', to: 'w',   kind: 'flow', label: 'KVM + ZFS' },
+    { from: 'prx', to: 's',   kind: 'flow', label: 'KVM + ZFS' },
+  ]}
+  caption="3 VMs Debian isolées sur Proxmox, chacune avec IP fixe sur le LAN"
+/>
 
 ## 📋 Étape 1 — Préparer le média d'install
 
@@ -124,6 +119,8 @@ Télécharge l'ISO Proxmox depuis https://www.proxmox.com/en/downloads. Flash av
 ```bash
 sudo dd if=proxmox-ve_8.x-x.iso of=/dev/sdX bs=4M status=progress conv=fsync
 ```
+
+La commande `dd` lit l'ISO bit-à-bit (`if=` = input file) et l'écrit directement sur la clé USB (`of=` = output file, **remplace `/dev/sdX` par ton périphérique réel, jamais le SSD système !**). `bs=4M` règle la taille de bloc sur 4 Mo pour maximiser le débit, et `conv=fsync` force un flush final — la clé est réellement écrite avant que la commande rende la main.
 
 Boote dessus, installe sur le SSD système (le 256 Go), config réseau **IP fixe** (note bien l'IP — `192.168.1.10` dans la suite).
 
@@ -145,30 +142,7 @@ sed -i 's/^/#/' /etc/apt/sources.list.d/ceph.list
 apt update && apt -y dist-upgrade
 ```
 
-## 🧠 Théorie courte : ZFS, le pourquoi du comment
-
-ZFS combine 3 choses qu'on assemble habituellement à la main :
-
-```
-   Approche classique             Approche ZFS
-
-   Application                    Application
-       │                              │
-   ext4 / xfs                     ┌────▼────┐
-       │                          │   ZFS   │  ← FS + LVM + RAID + checksum
-   LVM (volumes)                  │         │       + snapshots + compression
-       │                          │ tout en │
-   mdadm (RAID)                   │   un    │
-       │                          └────┬────┘
-   Disques                            │
-                                  Disques
-```
-
-**Atouts décisifs pour un homelab VM :**
-- **Snapshots COW** instantanés (utilisent uniquement les blocs modifiés)
-- **Checksums SHA-256** sur chaque bloc → détection de bitrot
-- **Compression lz4** transparente (gain ~30% sur des données VM)
-- **Thin provisioning** → 100 Go alloués à une VM = 100 Go logique, X Go réels
+Les deux `sed -i 's/^/#/'` commentent toutes les lignes des fichiers de dépôts enterprise — c'est plus propre que de les supprimer car un futur `apt update` n'a alors plus de référence cassée. Le `dist-upgrade` (vs `upgrade`) applique aussi les changements de dépendances, essentiel sur Proxmox qui refactorise parfois ses méta-paquets entre versions mineures.
 
 ## 📋 Étape 3 — Créer un pool ZFS sur le second disque
 
@@ -188,14 +162,21 @@ zfs set compression=lz4 tank
 zfs set atime=off tank
 ```
 
-Dans l'UI Proxmox → **Datacenter → Storage → Add → ZFS** : sélectionne `tank/vms` pour les disques de VM, `tank/iso` pour les ISOs.
+Quelques points-clés sur cette séquence :
 
-> 💡 `ashift=12` aligne les blocs sur 4 Ko — quasi obligatoire sur les SSD modernes. Oublier ça divise les perf par 2 à 3 silencieusement.
+- `-f` force la création même si ZFS détecte une signature de partition existante sur le disque. À n'utiliser **qu'après avoir vérifié avec `lsblk` que `/dev/sdb` est bien le second disque** — un `zpool create` est destructif.
+- `ashift=12` aligne les blocs ZFS sur 4 Ko (2¹² = 4096 octets). Presque tous les SSD modernes utilisent des pages de 4 Ko physiquement — si ZFS ne sait pas ça et aligne sur 512 octets (ashift=9, la valeur legacy), chaque écriture "tombe" à cheval sur deux pages, divisant les performances par 2 à 3 en écriture aléatoire. Cette valeur **ne peut pas être changée après création du pool** — d'où l'importance de la fixer dès le départ.
+- `zfs create tank/vms` crée un **dataset** (comme un répertoire intelligent) séparé pour les disques de VM. Séparer VMs et ISOs permet d'appliquer des propriétés différentes — par exemple plus de compression sur les ISOs, rétention de snapshots distincte.
+- `atime=off` désactive la mise à jour de l'heure d'accès à chaque lecture de fichier. Sur ext4, chaque lecture écrit un timestamp — sur un SSD sous charge VM, ça génère une avalanche d'écritures inutiles.
+
+Dans l'UI Proxmox → **Datacenter → Storage → Add → ZFS** : pour le stockage des disques de VM, choisis le dataset `tank/vms` et donne-lui l'ID `tank-vms` (champ *ID* du formulaire). Les ISOs vont sur un stockage de type *Directory* pointant sur `tank/iso` (ZFS ne stocke pas de fichiers ISO bruts, seulement des zvol de VM). Note bien l'ID `tank-vms` : c'est le nom qu'on réutilise dans les commandes `qm` plus bas.
+
+> 💡 **Distinction dataset vs ID de stockage** : `tank/vms` est le nom ZFS du dataset ; `tank-vms` est l'identifiant que Proxmox lui donne dans sa config (`/etc/pve/storage.cfg`). Les deux peuvent différer — les commandes `qm` utilisent toujours l'**ID Proxmox**, pas le chemin ZFS.
 
 ## 📋 Étape 4 — Template Debian cloud-init
 
 ```bash
-cd /var/lib/vz/template
+cd /root
 wget https://cloud.debian.org/images/cloud/bookworm/latest/debian-12-genericcloud-amd64.qcow2
 
 # Créer une VM template
@@ -204,11 +185,26 @@ qm create 9000 --name debian-12-tpl --memory 2048 --cores 2 \
 qm importdisk 9000 debian-12-genericcloud-amd64.qcow2 tank-vms
 qm set 9000 --scsihw virtio-scsi-pci --scsi0 tank-vms:vm-9000-disk-0
 qm set 9000 --ide2 tank-vms:cloudinit
-qm set 9000 --boot c --bootdisk scsi0
+qm set 9000 --boot order=scsi0 --bootdisk scsi0
 qm set 9000 --serial0 socket --vga serial0
-qm set 9000 --ciuser kim --sshkey ~/.ssh/authorized_keys
+qm set 9000 --agent enabled=1
+qm set 9000 --ciuser kim --sshkeys ~/.ssh/authorized_keys
 qm template 9000
 ```
+
+Cette séquence `qm` construit un template en plusieurs passes intentionnelles :
+
+- `qm importdisk` importe l'image qcow2 dans le pool ZFS (`tank-vms`) sans démarrer la VM — le disque existe physiquement mais n'est pas encore attaché.
+- Le nom de disque `vm-9000-disk-0` est celui que `qm importdisk` vient de créer sur le stockage `tank-vms` ; il s'affiche à la fin de la sortie d'`importdisk`. Si ton import affiche un autre nom (ex : `unused0`), adapte la commande `--scsi0`.
+- `--scsihw virtio-scsi-pci --scsi0` attache le disque via le contrôleur VirtIO-SCSI — le plus performant pour Linux (vs IDE/SATA émulés). VirtIO présente un périphérique paravirtualisé : le pilote invité parle directement à l'hyperviseur au lieu d'émuler un vrai contrôleur matériel, ce qui supprime une couche de traduction coûteuse.
+- `--ide2 tank-vms:cloudinit` crée un **second disque** (CDROM virtuel) qui contiendra les métadonnées cloud-init. À chaque clonage, ce CDROM sera personnalisé avec le hostname, l'IP et les clés SSH de la VM cible.
+- `--boot order=scsi0` (syntaxe Proxmox VE 8 ; l'ancien `--boot c` est déprécié) force le boot sur le disque système, pas sur le CDROM cloud-init.
+- `--serial0 socket --vga serial0` redirige la console sur un socket série — recommandé pour les images cloud Debian, qui sont configurées pour logguer sur `ttyS0`, et indispensable pour voir le boot si le réseau n'est pas encore monté.
+- `--agent enabled=1` active le canal QEMU Guest Agent. L'image genericcloud n'embarque pas l'agent par défaut ; cloud-init l'installera (voir l'option `packages` ci-dessous) pour que Proxmox connaisse l'IP réelle de la VM et puisse la quiescer lors des snapshots.
+- `--sshkeys` (avec un **s** ; `--sshkey` au singulier n'existe pas dans `qm`) injecte tes clés publiques dans le `authorized_keys` de l'utilisateur cloud-init.
+- `qm template 9000` verrouille la VM en mode template : elle ne peut plus démarrer directement, elle sert uniquement de source pour `qm clone`.
+
+> 💡 **Agent dans l'image** : pour que `--agent enabled=1` serve à quelque chose, l'agent doit être présent dans la VM. Le plus simple est de l'ajouter via cloud-init en éditant la conf du template : `qm set 9000 --cicustom "vendor=local:snippets/qemu-ga.yml"` avec un snippet qui fait `packages: [qemu-guest-agent]`. Sinon, installe-le manuellement au premier boot (`apt install qemu-guest-agent`).
 
 ## 📋 Étape 5 — Cloner les 3 VMs
 
@@ -232,6 +228,12 @@ qm resize 110 scsi0 +18G
 qm start 110
 ```
 
+`--full` force une copie complète du disque plutôt qu'un clone lié (linked clone). Un linked clone partage les blocs du template et est plus rapide à créer, mais supprime le template brise toutes les VMs qui en dépendent. Pour un homelab sérieux, `--full` donne des VMs totalement indépendantes.
+
+`--ipconfig0 ip=.../24,gw=...` injecte la configuration réseau dans le CDROM cloud-init : au premier boot, cloud-init lit ce CDROM, configure l'interface eth0, puis disparaît (le CDROM est ensuite ignoré). Sans cette option, la VM démarrerait avec DHCP et tu perdrais les IPs fixes.
+
+`qm resize 100 scsi0 +18G` étend le disque de la VM **avant le premier boot** — ZFS thin-provisionne la différence, mais la VM voit un disque de 20 Go. cloud-init gère automatiquement la croissance de la partition grâce à `growpart`.
+
 ## 🔬 Snapshot avant le lab suivant
 
 C'est le moment d'utiliser ce pourquoi tu as choisi ZFS. Crée un snapshot de chaque VM pour pouvoir rollback si tu casses tout au Lab #2 :
@@ -244,6 +246,8 @@ done
 # Lister les snapshots
 zfs list -t snapshot
 ```
+
+`qm snapshot` passe par ZFS pour créer un snapshot COW de chaque disque de VM. La boucle `for` prend les 3 snapshots en quelques secondes — l'opération est O(1), indépendante de la taille du disque. Si le Lab #2 brise un node, `qm rollback 100 base-after-lab1` ramène la VM à cet état précis en quelques secondes.
 
 ## ✅ Validation
 
@@ -259,6 +263,8 @@ zfs list
 ```
 
 Tu dois recevoir `OK ...` trois fois sans mot de passe, et `zpool status` doit dire `ONLINE` sans erreur.
+
+> 💡 **Patiente au premier boot** : cloud-init s'exécute pendant les 30-60 premières secondes du tout premier démarrage (création de l'utilisateur, injection des clés, `growpart`). Si le SSH refuse la connexion immédiatement après `qm start`, attends une minute puis réessaie — ce n'est pas une erreur, cloud-init n'a simplement pas fini.
 
 ## 🚀 Suite
 

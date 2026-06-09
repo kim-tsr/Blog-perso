@@ -4,6 +4,7 @@ import Link from 'next/link'
 import { usePathname } from 'next/navigation'
 import UserMenu from './UserMenu'
 import SearchPalette from './SearchPalette'
+import ThemeToggle from './ThemeToggle'
 import { Profile } from '@/lib/auth'
 import type { LabMeta } from '@/lib/labs'
 
@@ -56,6 +57,7 @@ export default function NavClient({ profile, labs }: { profile: Profile | null; 
       </ul>
       <div style={{ display:'flex', alignItems:'center', gap:14 }}>
         <SearchPalette labs={labs} />
+        <ThemeToggle />
         <UserMenu profile={profile} />
       </div>
     </nav>

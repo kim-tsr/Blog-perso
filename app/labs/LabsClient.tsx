@@ -3,7 +3,7 @@ import { useMemo, useRef, useState } from 'react'
 import Link from 'next/link'
 import ScrollReveal from '@/components/ScrollReveal'
 import { LabMeta, LabDifficulty } from '@/lib/labs'
-import { getThemeClasses, MinRole } from '@/lib/theme'
+import { getThemeClasses, themeColorVar, MinRole } from '@/lib/theme'
 
 type UserRole = 'free' | 'pro' | 'admin'
 const ROLE_RANK: Record<UserRole, number> = { free: 0, pro: 1, admin: 2 }
@@ -25,11 +25,12 @@ const DIFF_DOTS: Record<LabDifficulty, number> = {
   'avancé':        3,
 }
 
-const CATEGORIES: { key: 'all' | 'Infrastructure' | 'Cybersécurité' | 'Réseau'; label: string }[] = [
-  { key: 'all',           label: 'Toutes' },
+const CATEGORIES: { key: 'all' | 'Infrastructure' | 'Cybersécurité' | 'Réseau' | 'Systèmes'; label: string }[] = [
+  { key: 'all',            label: 'Toutes' },
   { key: 'Infrastructure', label: 'Infrastructure' },
   { key: 'Cybersécurité',  label: 'Cybersécurité' },
   { key: 'Réseau',         label: 'Réseau' },
+  { key: 'Systèmes',       label: 'Systèmes' },
 ]
 
 export default function LabsClient({ labs, userRole }: { labs: LabMeta[]; userRole?: UserRole | null }) {
@@ -194,7 +195,7 @@ export default function LabsClient({ labs, userRole }: { labs: LabMeta[]; userRo
             <div className="lab-grid">
               {filtered.map((lab, i) => {
                 const { tc } = getThemeClasses(lab.theme)
-                const col = tc === 'tv' ? 'var(--v)' : tc === 'tc' ? 'var(--c)' : 'var(--a)'
+                const col = themeColorVar(tc)
                 const dots = DIFF_DOTS[lab.difficulty]
                 return (
                   <ScrollReveal key={lab.slug} delay={(i % 2) * 0.08}>

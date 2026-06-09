@@ -20,23 +20,38 @@ export default async function AdminCommentsPage() {
 
   const supabase = await createClient()
 
-  // Fetch all comments with joined profile info
   const { data } = await supabase
     .from('comments')
-    .select('id, user_id, lab_slug, body, status, created_at, profiles(name, email)')
+    .select('id, user_id, lab_slug, body, status, created_at')
     .order('created_at', { ascending: false })
 
-  // eslint-disable-next-line @typescript-eslint/no-explicit-any
-  const comments: CommentAdminRow[] = (data ?? []).map((row: any) => ({
-    id: row.id,
-    user_id: row.user_id,
-    author_name: row.profiles?.name ?? null,
-    author_email: row.profiles?.email ?? null,
-    lab_slug: row.lab_slug,
-    body: row.body,
-    status: row.status as 'visible' | 'hidden' | 'flagged',
-    created_at: row.created_at,
-  }))
+  const rows = data ?? []
+  const userIds = Array.from(new Set(rows.map(r => r.user_id as string)))
+  const profilesById = new Map<string, { name: string | null; email: string | null }>()
+
+  if (userIds.length > 0) {
+    const { data: profs } = await supabase
+      .from('profiles')
+      .select('id, name, email')
+      .in('id', userIds)
+    for (const p of profs ?? []) {
+      profilesById.set(p.id as string, { name: p.name as string | null, email: p.email as string | null })
+    }
+  }
+
+  const comments: CommentAdminRow[] = rows.map(row => {
+    const prof = profilesById.get(row.user_id as string)
+    return {
+      id: row.id,
+      user_id: row.user_id,
+      author_name: prof?.name ?? null,
+      author_email: prof?.email ?? null,
+      lab_slug: row.lab_slug,
+      body: row.body,
+      status: row.status as 'visible' | 'hidden' | 'flagged',
+      created_at: row.created_at,
+    }
+  })
 
   return <AdminCommentsClient comments={comments} />
 }

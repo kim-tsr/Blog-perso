@@ -64,43 +64,63 @@ quiz:
 
 ## 🧠 Théorie : qu'est-ce qu'un JWT exactement ?
 
-Un JWT (JSON Web Token, RFC 7519) est une chaîne en 3 parties séparées par des points :
+L'authentification par token repose sur un principe simple : au lieu de maintenir une session côté serveur (état partagé, coûteux à scaler), on donne au client une **preuve cryptographique** de son identité. Le serveur peut vérifier cette preuve à chaque requête sans aller chercher quoi que ce soit en base. C'est le fondement du modèle **stateless** qui permet de faire tourner 50 replicas d'une API sans synchronisation d'état entre elles.
+
+Un JWT (JSON Web Token, RFC 7519) est la forme la plus répandue de cette preuve. Il est constitué de 3 parties encodées en base64url, séparées par des points. Le **header** déclare l'algorithme de signature et l'identifiant de la clé utilisée. Le **payload** contient les *claims* — les affirmations sur l'identité de l'utilisateur (qui il est, quand le token expire, pour quelle audience il est valide). La **signature** est le HMAC ou la signature RSA qui garantit que personne n'a modifié les deux premières parties.
+
+Point critique souvent mal compris : le payload n'est **pas chiffré**, seulement encodé en base64. N'importe qui peut le décoder et lire son contenu. Un JWT *authentifie* et *garantit l'intégrité* — il ne protège pas la confidentialité. Ne jamais y mettre de mot de passe, clé privée, ou donnée trop sensible.
+
+La durée de vie du token est un équilibre de sécurité : un token court (15 min) limite la fenêtre d'exploitation si volé, mais nécessite un mécanisme de **refresh**. Un token long (24h) est confortable mais transforme chaque vol en accès durable. La pratique industrielle combine un `access_token` court pour les appels API et un `refresh_token` opaque (stocké côté serveur, révocable) pour en obtenir un nouveau sans redemander les credentials.
+
+<Mermaid chart={`
+sequenceDiagram
+  participant C as Client
+  participant I as Issuer /login
+  participant A as API /me
+
+  C->>I: POST /login (user + password)
+  I->>I: vérifie credentials
+  I->>I: signe JWT RS256 (kid=v1, exp=+15min)
+  I-->>C: { jwt: "eyJ..." }
+
+  C->>A: GET /api/me<br/>Authorization: Bearer eyJ...
+  A->>A: vérifie signature (clé publique v1)
+  A->>A: vérifie exp, iss, aud
+  A-->>C: 200 { sub: "kim" }
+
+  note over C,A: Token expiré → 401 → refresh flow
+`} caption="Flow d'authentification JWT RS256 — l'API ne maintient aucun état de session" />
+
+### JWT en trois parties
 
 ```
-   eyJhbGciOiJSUzI1NiIsInR5cCI6IkpXVCIsImtpZCI6InYxIn0.eyJzdWIi...QGFwa.signature
-
-   ┌────────────────┐   ┌──────────────────┐   ┌─────────────┐
-   │     Header     │ . │     Payload      │ . │  Signature  │
-   │  (b64 JSON)    │   │   (b64 JSON)     │   │  (b64 sig)  │
-   └────────────────┘   └──────────────────┘   └─────────────┘
-
-   Header  = { "alg": "RS256", "typ": "JWT", "kid": "v1" }
-   Payload = { "sub": "kim@example.com", "exp": 1717246800, "role": "user" }
-   Signature = sign( base64(header) + "." + base64(payload), private_key )
+eyJhbGciOiJSUzI1NiIsInR5cCI6IkpXVCIsImtpZCI6InYxIn0.eyJzdWIiOiJraW0i...fQ.MEUCIQDk...signature
+└──────────── header ────────────┘ └─── payload ───┘ └─ signature ─┘
 ```
 
-Le payload n'est **pas chiffré**, juste base64. Toute donnée sensible (ex: mot de passe) y est lisible. **Un JWT signe et authentifie, il ne chiffre pas.**
+Les trois segments sont séparés par des points (`.`). Détaillons chacun :
+
+- **Header** (base64url) : `{ "alg": "RS256", "typ": "JWT", "kid": "v1" }` — `alg` déclare l'algorithme, `kid` identifie la clé de signature pour la rotation. *Risque si on fait confiance à `alg` : voir l'attaque alg:none plus bas.*
+- **Payload** (base64url) : `{ "sub": "kim@example.com", "exp": 1717246800, "role": "user", "iss": "...", "aud": "..." }` — les claims standardisés (RFC 7519) et ceux de l'application.
+- **Signature** : `sign(base64url(header) + "." + base64url(payload), private_key)` — recalculée à la vérification ; invalide si l'un des deux segments est modifié d'un seul octet.
+
+> 💡 **base64url, pas base64** : le JWT utilise l'alphabet *base64url* (RFC 4648 §5) — `-` et `_` au lieu de `+` et `/`, et **sans padding `=`**. C'est pour rester sûr dans une URL ou un header HTTP. C'est pourquoi le décodage manuel plus bas nécessite une conversion.
 
 ### OAuth vs OIDC vs JWT
 
-```
-   ┌─────────────────────────────────────────────────────┐
-   │                  JWT (format)                       │
-   │  Une chaîne signée portant des claims               │
-   └─────────────────────────────────────────────────────┘
-                            ▲
-                            │ utilisé comme transport par
-                            │
-   ┌───────────────────────┴───────────────────────────┐
-   │                                                   │
-   │  OAuth 2.0 (autorisation)    OIDC (auth + idp)    │
-   │  RFC 6749                    sur RFC 6749          │
-   │                                                   │
-   │  → access_token (opaque      → id_token (JWT)     │
-   │     ou JWT)                     + access_token    │
-   │  "accès à une ressource"     "identité du user"   │
-   └───────────────────────────────────────────────────┘
-```
+Ces trois termes désignent des niveaux d'abstraction différents, souvent confondus :
+
+<Stack layers={[
+  { label: "OIDC (OpenID Connect)", hint: "auth + identité du user → id_token (JWT) + access_token", accent: "v" },
+  { label: "OAuth 2.0", hint: "autorisation → accès à une ressource → access_token (opaque ou JWT)", accent: "c" },
+  { label: "JWT", hint: "format de token signé — utilisé comme transport par OAuth/OIDC", accent: "a" },
+]} caption="JWT est le format ; OAuth 2.0 et OIDC sont les protocoles qui l'utilisent" bottom="first" />
+
+OAuth 2.0 répond à la question "le user m'autorise-t-il à accéder à sa ressource ?" — il produit un `access_token`. OIDC ajoute par-dessus "qui est le user ?" — il produit un `id_token` (toujours un JWT signé). Dans ce lab on implémente directement l'émission JWT sans passer par un IDP complet, ce qui est le cas classique pour une API interne.
+
+### HS256 vs RS256 : pourquoi l'asymétrique gagne en prod
+
+Avec **HS256** (HMAC-SHA256), la même clé secrète signe *et* vérifie. En microservices, si 5 services doivent vérifier des tokens, ils ont tous la clé de signature — compromettre l'un d'eux permet de forger des tokens valides pour tous. Avec **RS256**, seul l'issuer possède la clé privée. Les services vérificateurs n'ont que la clé publique, qui ne permet que de vérifier, jamais de signer. La surface d'attaque est réduite à l'issuer seul.
 
 ## 🎯 Objectif
 
@@ -112,23 +132,23 @@ Monter une API REST Go avec :
 
 ## 📐 Architecture cible
 
-```
-   ┌─────────┐   POST /login    ┌──────────────┐
-   │ Client  │ ───────────────► │  API Server  │
-   │         │ ◄─────────────── │              │
-   └─────────┘   { jwt: "..." } │   issuer     │
-        │                       │ (signe RS256)│
-        │                       └──────┬───────┘
-        │                              │ private key
-        │ GET /api/me                  │ (v1, v2)
-        │ Authorization: Bearer …      │
-        │                              │
-        ▼                       ┌──────▼───────┐
-   ┌──────────┐                 │  JWKS endpoint│
-   │   API    │ ◄────── fetch ──┤  /.well-known/│
-   │ verifier │   pub keys      │  jwks.json    │
-   └──────────┘                 └───────────────┘
-```
+<Topology
+  nodes={[
+    { id: "client", kind: "user",    label: "Client",         col: 1, row: 1, accent: "v" },
+    { id: "issuer", kind: "service", label: "Issuer :8081",   col: 2, row: 1, accent: "c" },
+    { id: "api",    kind: "service", label: "API :8080",      col: 3, row: 1, accent: "c" },
+    { id: "jwks",   kind: "db",      label: "JWKS /.well-known", col: 2, row: 2, accent: "a" },
+    { id: "keys",   kind: "db",      label: "keys/ (RSA)",    col: 3, row: 2, accent: "a" },
+  ]}
+  edges={[
+    { from: "client", to: "issuer", label: "POST /login",   kind: "flow" },
+    { from: "issuer", to: "client", label: "JWT signé",     kind: "data" },
+    { from: "client", to: "api",    label: "Bearer token",  kind: "flow" },
+    { from: "issuer", to: "jwks",   label: "expose",        kind: "sync" },
+    { from: "api",    to: "keys",   label: "charge pubkeys",kind: "data" },
+  ]}
+  caption="L'issuer signe avec la clé privée ; l'API vérifie avec la clé publique"
+/>
 
 ## 📋 Étape 1 — Générer les paires de clés RSA
 
@@ -143,6 +163,8 @@ openssl genpkey -algorithm RSA -out keys/v2.pem -pkeyopt rsa_keygen_bits:2048
 openssl rsa -in keys/v2.pem -pubout -out keys/v2.pub
 ```
 
+`genpkey -algorithm RSA -pkeyopt rsa_keygen_bits:2048` génère une paire RSA 2048 bits — assez pour RS256, compatible FIPS. `rsa -pubout` en extrait la clé publique au format PEM. On génère deux paires dès maintenant pour pouvoir démontrer la rotation à l'étape 6 sans interrompre le service.
+
 ## 📋 Étape 2 — Issuer Go simple
 
 ```go
@@ -151,8 +173,10 @@ package main
 
 import (
   "crypto/rsa"
+  "encoding/base64"
   "encoding/json"
   "log"
+  "math/big"
   "net/http"
   "os"
   "time"
@@ -164,8 +188,10 @@ var privKeys = map[string]*rsa.PrivateKey{}
 var activeKid = "v1"
 
 func loadKey(kid, path string) {
-  b, _ := os.ReadFile(path)
-  k, _ := jwt.ParseRSAPrivateKeyFromPEM(b)
+  b, err := os.ReadFile(path)
+  if err != nil { log.Fatalf("lecture clé %s: %v", path, err) }
+  k, err := jwt.ParseRSAPrivateKeyFromPEM(b)
+  if err != nil { log.Fatalf("parse clé %s: %v", path, err) }
   privKeys[kid] = k
 }
 
@@ -184,20 +210,25 @@ func login(w http.ResponseWriter, r *http.Request) {
   }
   tok := jwt.NewWithClaims(jwt.SigningMethodRS256, claims)
   tok.Header["kid"] = activeKid
-  signed, _ := tok.SignedString(privKeys[activeKid])
+  signed, err := tok.SignedString(privKeys[activeKid])
+  if err != nil { http.Error(w, "signing error", 500); return }
   json.NewEncoder(w).Encode(map[string]string{"jwt": signed})
 }
 
-// JWKS : exposer les clés publiques pour les vérifieurs externes
+// JWKS : exposer les clés publiques au format RFC 7517 (JWK Set)
+// n et e sont les paramètres de la clé publique RSA, en base64url big-endian.
 func jwks(w http.ResponseWriter, r *http.Request) {
-  // (simplifié : on devrait sérialiser correctement en RFC 7517)
   keys := []map[string]any{}
-  for kid := range privKeys {
+  for kid, priv := range privKeys {
+    pub := priv.Public().(*rsa.PublicKey)
+    n := base64.RawURLEncoding.EncodeToString(pub.N.Bytes())
+    e := base64.RawURLEncoding.EncodeToString(big.NewInt(int64(pub.E)).Bytes())
     keys = append(keys, map[string]any{
       "kid": kid, "kty": "RSA", "alg": "RS256", "use": "sig",
-      // n, e à extraire de la clé publique — omis ici pour la concision
+      "n": n, "e": e,
     })
   }
+  w.Header().Set("Content-Type", "application/json")
   json.NewEncoder(w).Encode(map[string]any{"keys": keys})
 }
 
@@ -211,6 +242,11 @@ func main() {
 }
 ```
 
+Points clés de cet issuer :
+- `jwt.MapClaims` contient les claims RFC 7519 standards : `iss` (émetteur), `aud` (audience attendue), `iat` (émission), `exp` (expiration). Sans `iss` et `aud`, un token émis pour une API pourrait être réutilisé sur une autre.
+- `tok.Header["kid"] = activeKid` ajoute le key ID dans le header — c'est ce qui permet à l'API de choisir la bonne clé publique lors de la vérification.
+- L'endpoint `/.well-known/jwks.json` suit la RFC 7517 (JWK Set) : chaque clé publique RSA est sérialisée via son module `n` et son exposant `e` (base64url, big-endian, sans padding). Des services tiers (Keycloak, Auth0, l'IdP de ton cloud) exposent exactement ce format — ton API pourrait donc, en remplaçant le chargement de fichiers par un fetch + cache du JWKS distant, vérifier des tokens émis par n'importe quel IDP compatible sans jamais détenir de clé privée.
+
 ## 📋 Étape 3 — Serveur de ressource avec vérif stricte
 
 ```go
@@ -220,6 +256,7 @@ package main
 import (
   "crypto/rsa"
   "fmt"
+  "log"
   "net/http"
   "os"
   "strings"
@@ -230,8 +267,10 @@ import (
 var pubKeys = map[string]*rsa.PublicKey{}
 
 func loadPub(kid, path string) {
-  b, _ := os.ReadFile(path)
-  k, _ := jwt.ParseRSAPublicKeyFromPEM(b)
+  b, err := os.ReadFile(path)
+  if err != nil { log.Fatalf("lecture pubkey %s: %v", path, err) }
+  k, err := jwt.ParseRSAPublicKeyFromPEM(b)
+  if err != nil { log.Fatalf("parse pubkey %s: %v", path, err) }
   pubKeys[kid] = k
 }
 
@@ -248,6 +287,11 @@ func keyFunc(t *jwt.Token) (interface{}, error) {
 
 func authMiddleware(next http.HandlerFunc) http.HandlerFunc {
   return func(w http.ResponseWriter, r *http.Request) {
+    // CRITIQUE : purger tout X-User/X-Role envoyé par le client.
+    // Sinon un attaquant pose lui-même "X-User: admin" et court-circuite l'auth.
+    r.Header.Del("X-User")
+    r.Header.Del("X-Role")
+
     h := r.Header.Get("Authorization")
     if !strings.HasPrefix(h, "Bearer ") {
       http.Error(w, "missing bearer", 401); return
@@ -261,10 +305,13 @@ func authMiddleware(next http.HandlerFunc) http.HandlerFunc {
       jwt.WithExpirationRequired(),
     )
     if err != nil || !tok.Valid {
-      http.Error(w, "invalid token: "+err.Error(), 401); return
+      http.Error(w, "invalid token", 401); return  // pas de détail au client
     }
-    claims := tok.Claims.(jwt.MapClaims)
-    r.Header.Set("X-User", claims["sub"].(string))
+    claims, ok := tok.Claims.(jwt.MapClaims)
+    if !ok { http.Error(w, "invalid claims", 401); return }
+    sub, ok := claims["sub"].(string)
+    if !ok || sub == "" { http.Error(w, "missing sub", 401); return }
+    r.Header.Set("X-User", sub)
     next(w, r)
   }
 }
@@ -282,24 +329,39 @@ func main() {
 }
 ```
 
+La `keyFunc` est le coeur de la sécurité :
+- La vérification `t.Method.(*jwt.SigningMethodRSA)` force le type d'algorithme en Go, indépendamment de la valeur `alg` dans le header. Sans ça, une lib naïve lirait `"alg":"none"` depuis le token et n'appliquerait pas de vérification de signature. C'est aussi cette vérif qui bloque l'attaque dite de **confusion d'algorithme** (algorithm confusion) : un attaquant pose `alg:HS256` et signe le token en HMAC avec la clé **publique RSA** (qui est… publique) comme secret. Si le serveur récupérait aveuglément la clé associée au `kid` et la passait à un vérificateur HMAC, le token forgé passerait. En forçant `SigningMethodRSA` ici, ce vecteur est mort.
+- `jwt.WithValidMethods([]string{"RS256"})` est une deuxième barrière au niveau de la lib — les deux ensemble éliminent la faille alg:none (classe de bugs popularisée par l'advisory Auth0 de 2015 sur de nombreuses libs JWT) et la confusion HS/RS.
+- `jwt.WithIssuer` et `jwt.WithAudience` empêchent les **replay cross-service** : un token émis pour une audience `homelab-api` ne sera pas accepté par un service qui attend une autre `aud`.
+- `jwt.WithExpirationRequired()` refuse explicitement les tokens sans claim `exp` — sans ça, une lib permissive accepterait des tokens éternels.
+- On renvoie un message d'erreur **générique** (`invalid token`) au client : le détail de l'erreur (`err.Error()`) sera loggé côté serveur au Lab #3, jamais exposé. Dire *pourquoi* un token est rejeté aide un attaquant à le forger par essai-erreur.
+
+> 💡 **Pourquoi `kid` lookup et pas une seule clé en dur ?** Le `keyFunc` lit `kid` depuis le header (non signé, donc non fiable en soi) **uniquement pour choisir une clé dans un set fermé que TU contrôles** (`pubKeys`). Un `kid` inconnu → rejet immédiat. On ne fait jamais confiance au `kid` pour autre chose (ex : aller chercher une URL arbitraire — c'est un vecteur SSRF dans les implémentations naïves de JWKS).
+
 ## 📋 Étape 4 — Tester la chaîne
 
+> ⚠️ **Note sur les chemins** : les deux `main.go` chargent les clés via `../keys/...`, donc ils doivent être lancés depuis leur propre sous-dossier (`issuer/` et `api/`). On utilise des sous-shells `( ... )` pour que chaque `cd` reste local et ne casse pas le suivant.
+
 ```bash
-# Démarrer
-cd issuer && go run main.go &
-cd api && go run main.go &
+# Démarrer chaque service dans un sous-shell (le cd ne fuit pas)
+( cd issuer && go run main.go ) &
+( cd api && go run main.go ) &
+sleep 1   # laisser les serveurs binder leurs ports
 
 # Obtenir un token
 TOKEN=$(curl -s -X POST -d "user=kim" http://localhost:8081/login | jq -r .jwt)
-echo $TOKEN
+echo "$TOKEN"
 
-# Décoder (juste base64, pas crypto)
-echo $TOKEN | cut -d. -f2 | base64 -d 2>/dev/null | jq
+# Décoder le payload (juste base64url, AUCUNE crypto)
+# tr remet le base64url en base64 standard, puis on rajoute le padding
+echo "$TOKEN" | cut -d. -f2 | tr '_-' '/+' | base64 -d 2>/dev/null | jq
 
 # Appeler l'API
 curl -H "Authorization: Bearer $TOKEN" http://localhost:8080/api/me
 # → Hello, kim
 ```
+
+`cut -d. -f2` extrait le deuxième segment du JWT (le payload). Comme c'est du **base64url**, on reconvertit `_`/`-` en `/`/`+` avec `tr` avant de passer à `base64 -d` (certaines implémentations de `base64` refusent l'alphabet url et le padding manquant). C'est la démonstration concrète que le payload est lisible par n'importe qui : **ne jamais y mettre de secret**. La signature, elle, reste invérifiable sans la clé — c'est elle qui garantit l'intégrité, pas le secret du contenu.
 
 ## 📋 Étape 5 — Tester les attaques classiques
 
@@ -315,21 +377,31 @@ curl -H "Authorization: Bearer $FORGED" http://localhost:8080/api/me
 # → 401 invalid token: alg non autorisé
 ```
 
-✓ La vérif `jwt.WithValidMethods([]string{"RS256"})` bloque.
+Ce script construit un JWT "à la main" avec `alg:none` et une troisième partie (signature) **vide**. L'astuce `tr -d '=' | tr '/+' '_-'` convertit le base64 standard en base64url (suppression du padding `=`, `_` et `-` à la place de `/` et `+`). Le serveur reçoit un token aux claims `role:admin` mais sans signature : `jwt.WithValidMethods([]string{"RS256"})` (et le test `SigningMethodRSA` dans `keyFunc`) le rejette avant même de regarder les claims. *Risque si omis : escalade de privilèges triviale.*
 
 ### Attaque 2 : Token expiré
 
-```bash
-# Manuellement, prendre un vieux token...
-# → 401 invalid token: token is expired
-```
-
-### Attaque 3 : Mauvais audience
+Pour fabriquer un token déjà expiré sans modifier l'issuer, on baisse temporairement le `exp` à `time.Now().Add(-1 * time.Minute).Unix()` dans `login`, on relance l'issuer, et on rejoue le flow :
 
 ```bash
-# Si on fait Ie token pour aud=different-api, on accepte ?
-# → 401 invalid token: token has invalid audience
+TOKEN=$(curl -s -X POST -d "user=kim" http://localhost:8081/login | jq -r .jwt)
+curl -i -H "Authorization: Bearer $TOKEN" http://localhost:8080/api/me
+# → HTTP/1.1 401  (le log serveur précise : token is expired)
 ```
+
+`jwt.WithExpirationRequired()` couplé à la vérification automatique de `exp` par la lib rejette le token. Sans `exp`, un token volé resterait valide indéfiniment — d'où l'importance de l'`access_token` court + `refresh_token` révocable.
+
+### Attaque 3 : Mauvaise audience
+
+On rejoue avec un issuer configuré pour `aud: "autre-api"` (un token parfaitement signé, mais destiné à un autre service) :
+
+```bash
+# token signé avec aud="autre-api"
+curl -i -H "Authorization: Bearer $TOKEN_AUTRE_AUD" http://localhost:8080/api/me
+# → HTTP/1.1 401  (token has invalid audience)
+```
+
+`jwt.WithAudience("homelab-api")` refuse un token valide mais émis pour une autre cible. C'est la défense contre le **replay cross-service** : voler un token sur l'API de facturation ne donne pas accès à l'API RH.
 
 ## 📋 Étape 6 — Rotation des clés
 
@@ -342,19 +414,17 @@ Activer v2 sans casser les tokens v1 en circulation :
 // jusqu'à leur expiration naturelle (15 min)
 ```
 
-Après expiration de tous les tokens v1, tu peux supprimer v1.pub côté API.
+La rotation se fait en deux temps : d'abord on change la clé de signature (les nouveaux tokens utilisent v2), ensuite on retire la clé publique v1 seulement après que tous les tokens v1 ont expiré. Avec `exp=15min`, c'est automatique en moins d'un quart d'heure. Sans `kid`, on ne saurait pas quelle clé publique utiliser pour vérifier chaque token — la rotation serait impossible sans coupure.
 
 ## 🧠 Recap des protections en place
 
-```
-   Couche                    Protège contre
-   ─────────────────────     ────────────────────────────
-   alg whitelist             alg:none, downgrade HS256
-   kid → pub key             rotation, multi-issuer
-   Issuer/audience vérifiés  cross-application replay
-   Expiration obligatoire    token volé = limité dans temps
-   Signature asymétrique     vérifieur compromis ≠ forge
-```
+<Stack layers={[
+  { label: "alg whitelist (RS256 forcé)", hint: "bloque alg:none et downgrade vers HS256", accent: "c" },
+  { label: "kid → pub key lookup", hint: "rotation multi-clés, multi-issuer", accent: "c" },
+  { label: "iss + aud vérifiés", hint: "bloque les replays cross-service", accent: "v" },
+  { label: "exp obligatoire", hint: "un token volé a une durée de vie limitée", accent: "v" },
+  { label: "Signature RSA asymétrique", hint: "vérifieur compromis ≠ peut forger", accent: "a" },
+]} caption="Défenses en profondeur — chaque couche protège contre une famille d'attaques distincte" bottom="first" />
 
 ## ✅ Validation
 

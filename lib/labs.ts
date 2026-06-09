@@ -27,6 +27,8 @@ export interface LabMeta {
   series?: string | null
   seriesOrder?: number | null
   quiz?: QuizQuestion[]
+  /** Lab exécutable dans un container k3s éphémère (Phase 4) */
+  sandboxable?: boolean
 }
 
 export interface Lab extends LabMeta {
@@ -42,15 +44,17 @@ const DIFFICULTY_ORDER: Record<LabDifficulty, number> = {
 }
 
 const SLUG_TO_TAG: Record<string, ArticleTag> = {
-  infra: 'Infrastructure',
-  sec: 'Cybersécurité',
-  reseau: 'Réseau',
+  infra:    'Infrastructure',
+  sec:      'Cybersécurité',
+  reseau:   'Réseau',
+  systemes: 'Systèmes',
 }
 
 const SLUG_TO_THEME: Record<string, ArticleTheme> = {
-  infra: 'violet',
-  sec:   'cyan',
-  reseau:'amber',
+  infra:    'violet',
+  sec:      'cyan',
+  reseau:   'amber',
+  systemes: 'magenta',
 }
 
 interface DbLabRow {
@@ -109,6 +113,7 @@ function readMdxLabs(): Lab[] {
       series:        (data.series ?? null) as string | null,
       seriesOrder:   (data.seriesOrder ?? null) as number | null,
       quiz:          (data.quiz ?? null) as QuizQuestion[] | null ?? undefined,
+      sandboxable:   (data.sandboxable ?? false) as boolean,
       content,
     }
   })

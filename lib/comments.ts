@@ -48,7 +48,7 @@ export async function getCommentsForLab(
 
     let query = supabase
       .from('comments')
-      .select('id, user_id, body, status, created_at, updated_at, profiles(name, email)', { count: 'exact' })
+      .select('id, user_id, body, status, created_at, updated_at', { count: 'exact' })
       .eq('lab_slug', slug)
       .order('created_at', { ascending: true })
       .range(from, to)
@@ -64,10 +64,23 @@ export async function getCommentsForLab(
       return { comments: [], total: 0 }
     }
 
-    // eslint-disable-next-line @typescript-eslint/no-explicit-any
-    const comments: Comment[] = (data ?? []).map((row: any) => {
-      const profileData = Array.isArray(row.profiles) ? row.profiles[0] : row.profiles
-      const name = profileData?.name ?? profileData?.email ?? 'Anonyme'
+    const rows = data ?? []
+    const userIds = Array.from(new Set(rows.map(r => r.user_id)))
+    const profilesById = new Map<string, { name: string | null; email: string | null }>()
+
+    if (userIds.length > 0) {
+      const { data: profs } = await supabase
+        .from('profiles')
+        .select('id, name, email')
+        .in('id', userIds)
+      for (const p of profs ?? []) {
+        profilesById.set(p.id as string, { name: p.name as string | null, email: p.email as string | null })
+      }
+    }
+
+    const comments: Comment[] = rows.map(row => {
+      const prof = profilesById.get(row.user_id)
+      const name = prof?.name ?? prof?.email ?? 'Anonyme'
       return {
         id: row.id,
         user_id: row.user_id,

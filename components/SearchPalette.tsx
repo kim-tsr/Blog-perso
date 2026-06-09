@@ -14,7 +14,7 @@ interface Item {
   title: string
   subtitle: string
   tag?: string
-  tc?: 'tv' | 'tc' | 'ta'
+  tc?: 'tv' | 'tc' | 'ta' | 'ts'
 }
 
 const STATIC_PAGES: Item[] = [
@@ -26,8 +26,8 @@ const STATIC_PAGES: Item[] = [
   { type: 'page', href: '/feed.xml',   title: 'Flux RSS',        subtitle: 'S\'abonner aux nouveaux labs' },
 ]
 
-const THEME_TO_TC: Record<string, 'tv' | 'tc' | 'ta'> = {
-  violet: 'tv', cyan: 'tc', amber: 'ta',
+const THEME_TO_TC: Record<string, 'tv' | 'tc' | 'ta' | 'ts'> = {
+  violet: 'tv', cyan: 'tc', amber: 'ta', magenta: 'ts',
 }
 
 export default function SearchPalette({ labs }: Props) {
@@ -257,6 +257,7 @@ export default function SearchPalette({ labs }: Props) {
         .sp-kind.tv { color:var(--v); border-color:color-mix(in oklab, var(--v) 35%, var(--border)); background:color-mix(in oklab, var(--v) 10%, transparent); }
         .sp-kind.tc { color:var(--c); border-color:color-mix(in oklab, var(--c) 35%, var(--border)); background:color-mix(in oklab, var(--c) 10%, transparent); }
         .sp-kind.ta { color:var(--a); border-color:color-mix(in oklab, var(--a) 35%, var(--border)); background:color-mix(in oklab, var(--a) 10%, transparent); }
+        .sp-kind.ts { color:var(--s); border-color:color-mix(in oklab, var(--s) 35%, var(--border)); background:color-mix(in oklab, var(--s) 10%, transparent); }
 
         .sp-item-body { flex:1; min-width:0; }
         .sp-item-title { font-family:var(--fb); font-size:13.5px; font-weight:500; color:var(--text); white-space:nowrap; overflow:hidden; text-overflow:ellipsis; }

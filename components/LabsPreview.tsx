@@ -2,7 +2,7 @@
 import Link from 'next/link'
 import ScrollReveal from './ScrollReveal'
 import { LabMeta } from '@/lib/labs'
-import { getThemeClasses } from '@/lib/theme'
+import { getThemeClasses, themeColorVar } from '@/lib/theme'
 
 const DIFF_DOTS: Record<string, number> = {
   'débutant': 1, 'intermédiaire': 2, 'avancé': 3,
@@ -54,7 +54,7 @@ export default function LabsPreview({ labs }: { labs: LabMeta[] }) {
         <div className="lp-grid">
           {featured.map((lab, i) => {
             const { tc } = getThemeClasses(lab.theme)
-            const col = tc === 'tv' ? 'var(--v)' : tc === 'tc' ? 'var(--c)' : 'var(--a)'
+            const col = themeColorVar(tc)
             const dots = DIFF_DOTS[lab.difficulty] || 1
             return (
               <ScrollReveal key={lab.slug} delay={i * 0.08}>

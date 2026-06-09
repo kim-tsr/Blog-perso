@@ -1,5 +1,5 @@
 import { getAllLabs, getLabBySlug } from '@/lib/labs'
-import { getThemeClasses } from '@/lib/theme'
+import { getThemeClasses, themeColorVar } from '@/lib/theme'
 import { notFound } from 'next/navigation'
 import { MDXRemote } from 'next-mdx-remote/rsc'
 import { mdxComponents } from '@/components/mdxComponents'
@@ -17,6 +17,8 @@ import { recommendNextLabs } from '@/lib/recommendations'
 import NextUp from '@/components/NextUp'
 import NewsletterSignup from '@/components/NewsletterSignup'
 import Comments from '@/components/Comments'
+import LabSandboxButton from '@/components/LabSandboxButton'
+import { getActiveSession } from '@/lib/lab-sessions'
 import { createClient } from '@/lib/supabase/server'
 import { SITE_URL, SITE_NAME, SITE_AUTHOR } from '@/lib/site'
 import type { Metadata } from 'next'
@@ -82,8 +84,12 @@ export default async function LabPage({ params, searchParams }: { params: Promis
   const previousBest = allowed && profile ? await getUserBestQuizScore(lab.slug) : null
   const userProgress = profile ? await getUserProgress() : null
 
+  // Sandbox éphémère : admin only au début, lab.sandboxable requis
+  const canUseSandbox = !!(lab.sandboxable && profile?.role === 'admin')
+  const activeSession = canUseSandbox ? await getActiveSession() : null
+
   const { tc } = getThemeClasses(lab.theme)
-  const col = tc === 'tv' ? 'var(--v)' : tc === 'tc' ? 'var(--c)' : 'var(--a)'
+  const col = themeColorVar(tc)
   const dots = DIFF_DOTS[lab.difficulty] || 1
   const allLabs = await getAllLabs()
   const labsInSeries = lab.series ? allLabs.filter(l => l.series === lab.series) : []
@@ -201,6 +207,19 @@ export default async function LabPage({ params, searchParams }: { params: Promis
           <div style={{ marginTop: 20 }}>
             <BookmarkButton type="lab" slug={lab.slug} />
           </div>
+
+          {canUseSandbox && (
+            <LabSandboxButton
+              slug={lab.slug}
+              themeColor={col}
+              activeSession={activeSession ? {
+                id: activeSession.id,
+                labSlug: activeSession.labSlug,
+                sandboxUrl: activeSession.sandboxUrl,
+                expiresAt: activeSession.expiresAt,
+              } : null}
+            />
+          )}
 
           <div className="lb-info-grid">
             <div className="lb-info-cell">

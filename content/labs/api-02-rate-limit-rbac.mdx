@@ -61,49 +61,49 @@ quiz:
 
 > 📚 **Série « API sécurisée from zero »** — Lab 2 / 4. Reprend l'API du Lab #1 et ajoute les défenses contre l'abus.
 
-## 🧠 Théorie : 3 algorithmes de rate limiting
+## 🧠 Théorie : rate limiting et contrôle d'accès
 
-### Fixed window (le piège classique)
+Une API authentifiée (lab #1) est protégée contre les accès non autorisés. Elle n'est pas encore protégée contre deux classes d'abus distincts : la **surcharge** (un client légitime ou malveillant qui appelle trop vite) et le **dépassement de droits** (un client authentifié qui accède à des ressources qu'il n'est pas censé voir). Ce lab ajoute exactement ces deux couches.
 
-```
-   Compteur reset à chaque minute (00:00, 00:01, 00:02...)
+### Les trois algorithmes de rate limiting
 
-   Time    │  Req
-   ────────┼─────
-   23:59:55│ ▓
-   23:59:56│ ▓▓
-   23:59:57│ ▓▓▓
-   23:59:58│ ▓▓▓▓
-   23:59:59│ ▓▓▓▓▓▓▓▓▓▓ (10 req, max atteint)
-   00:00:00│ ▓▓▓▓▓▓▓▓▓▓ (reset — 10 req à nouveau)
-                ↑
-           20 req en 1 seconde — burst non détecté
-```
+Le rate limiting répond à une question simple : "ce client a-t-il le droit de faire une requête de plus ?" La subtilité est dans la définition de "trop". Chaque algorithme donne une réponse différente avec des compromis distincts.
 
-### Token bucket (recommandé)
+**Fixed window** est le plus naïf : on compte les requêtes dans une fenêtre de temps fixe (ex: par minute), et on bloque quand le compteur dépasse le seuil. Le problème est structurel : un attaquant peut envoyer 100 requêtes à 23:59:59 et 100 autres à 00:00:00 — soit 200 requêtes en 2 secondes, sans que l'algorithme le détecte. Ce burst aux frontières de fenêtre est un vecteur d'attaque classique.
 
-```
-   Bucket de capacité 10, refill 1 token / 6 secondes
+**Token bucket** (seaux à jetons) est l'algorithme recommandé pour les APIs. Chaque client dispose d'un seau de N jetons. Chaque requête consomme un jeton. Les jetons se reconstituent en continu à un taux fixe (ex: 1 jeton toutes les 6 secondes = 10/min). Si le seau est vide → 429. L'avantage : les bursts légitimes sont tolérés (vider le seau d'un coup est OK), mais on ne peut pas dépasser le débit moyen sur la durée.
 
-   ┌──────────────┐
-   │ ●●●●●●●●●●   │  ← capacité 10
-   │              │
-   └──────────────┘
-   chaque requête │
-   consomme 1 token
+**Sliding window log** est le plus précis mais aussi le plus coûteux : on stocke le timestamp de chaque requête et on compte dans une fenêtre glissante. Pas de burst aux frontières, mais `O(N)` en mémoire par utilisateur avec N requêtes dans la fenêtre. Utile pour les APIs très sensibles au taux exact, moins pertinent à grande échelle.
 
-   Si bucket vide → 429 Too Many Requests
-   Tokens reviennent en continu
-```
+<Mermaid chart={`
+graph LR
+  A[Nouvelle requête] --> B{Bucket vide ?}
+  B -- Non --> C[Consommer 1 jeton]
+  C --> D[200 OK]
+  B -- Oui --> E[429 Rate Limited]
+  F[Temps qui passe] -->|+1 jeton / 6s| B
+  style E fill:#2a0a0a,stroke:#e04040,color:#ffd0d0
+  style D fill:#0a1a0a,stroke:#40a040,color:#d0ffd0
+`} caption="Token bucket : le refill continu lisse le débit et tolère les petits bursts" />
 
-### Sliding window log (le plus précis)
+### Pourquoi limiter par token (user) et non par IP
 
-```
-   Pour chaque requête : on stocke le timestamp.
-   À chaque nouvelle req : on compte les timestamps dans la fenêtre.
+Limiter par IP pénalise des utilisateurs légitimes derrière le même NAT (bureau d'entreprise, opérateur mobile) dès qu'un seul d'entre eux consomme trop. Limiter par identité JWT isole correctement chaque utilisateur. En pratique on applique les deux : une limite IP très laxiste pour les endpoints non-authentifiés (anti-scan), et une limite par token pour tout ce qui est authentifié.
 
-   Précis mais coûteux en mémoire pour les gros volumes.
-```
+### RBAC vs ABAC : quand utiliser quoi
+
+**RBAC** (Role-Based Access Control) associe des permissions à des rôles, et des rôles à des utilisateurs. C'est statique, lisible, rapide à évaluer, et suffisant pour la grande majorité des APIs. `viewer` peut lire, `editor` peut écrire, `admin` peut tout faire.
+
+**ABAC** (Attribute-Based Access Control) calcule les droits dynamiquement depuis des attributs du user, de la ressource, et du contexte. "Un editor peut modifier un document si et seulement si il en est le propriétaire ET si c'est pendant les heures de bureau ET si le document n'est pas archivé." Plus puissant, mais la complexité des politiques est un risque : des règles mal combinées créent des failles difficiles à auditer.
+
+La pratique industrielle combine les deux : RBAC pour les grandes lignes (qui peut accéder à quelle catégorie de ressource), ABAC pour les règles fines d'ownership ou de contexte.
+
+<Stack layers={[
+  { label: "ABAC (optionnel)", hint: "ownership, horaires, localisation — dynamique", accent: "a" },
+  { label: "RBAC", hint: "viewer / editor / admin — statique, rapide à auditer", accent: "c" },
+  { label: "Rate limiting", hint: "anti-abus, anti-DDoS — avant même d'évaluer les droits", accent: "v" },
+  { label: "JWT Auth (Lab #1)", hint: "qui est-ce ? le token est-il valide ?", accent: "s" },
+]} caption="Middleware chain : du plus bas niveau au plus applicatif — chaque couche filtre avant la suivante" bottom="first" />
 
 ## 🎯 Objectif
 
@@ -115,24 +115,28 @@ quiz:
 
 ## 📐 Architecture
 
-```
-   Client ───► Authorization: Bearer <jwt>
-                          │
-                          ▼
-   ┌─────────────────────────────────────────┐
-   │             API Server                  │
-   │                                         │
-   │  Middleware chain:                      │
-   │    [auth]   ► [rate-limit]   ► [rbac]   │
-   │       │           │                 │   │
-   │       ▼           ▼                 ▼   │
-   │   JWT verify   Redis            Casbin /│
-   │   (lab #1)     INCR + TTL       table   │
-   └─────────────────────────────────────────┘
-                          │
-                          ▼
-                     Handler métier
-```
+<Mermaid chart={`
+sequenceDiagram
+  participant C as Client
+  participant M1 as Middleware Auth
+  participant M2 as Middleware Rate-limit
+  participant M3 as Middleware RBAC
+  participant H as Handler métier
+  participant R as Redis
+
+  C->>M1: Bearer token
+  M1->>M1: vérifie JWT (Lab #1)
+  M1-->>C: 401 si invalide
+  M1->>M2: X-User posé
+  M2->>R: EVAL lua_script (key=rl:user)
+  R-->>M2: tokens restants
+  M2-->>C: 429 si bucket vide
+  M2->>M3: OK
+  M3->>M3: Can(role, action) ?
+  M3-->>C: 403 si non autorisé
+  M3->>H: OK
+  H-->>C: 200 + payload
+`} caption="Chaîne de middlewares — chaque étape peut court-circuiter la requête" />
 
 ## 📋 Étape 1 — Rate limiter Go + Redis
 
@@ -141,12 +145,15 @@ quiz:
 package middleware
 
 import (
+  "context"
   "fmt"
   "net/http"
   "time"
 
   "github.com/redis/go-redis/v9"
 )
+
+var ctx = context.Background() // contexte partagé pour les appels Redis
 
 type Limiter struct {
   rdb       *redis.Client
@@ -170,27 +177,40 @@ local data = redis.call('HMGET', key, 'tokens', 'ts')
 local tokens = tonumber(data[1]) or capacity
 local ts = tonumber(data[2]) or now
 
+-- refill "lazy" : on rajoute les jetons accumulés depuis le dernier passage
 local elapsed = (now - ts) / 1000.0
 local refill = elapsed / refill_sec
 tokens = math.min(capacity, tokens + refill)
 
+-- TTL = temps pour remplir un bucket vide. Au-delà, l'état est inutile
+-- (le bucket serait de toute façon plein) → nettoyage auto des inactifs.
+local ttl = math.ceil(capacity * refill_sec)
+
 if tokens < 1 then
-  redis.call('HMSET', key, 'tokens', tokens, 'ts', now)
-  redis.call('EXPIRE', key, math.ceil(capacity * refill_sec))
+  redis.call('HSET', key, 'tokens', tokens, 'ts', now)
+  redis.call('EXPIRE', key, ttl)
   return 0
 end
 
 tokens = tokens - 1
-redis.call('HMSET', key, 'tokens', tokens, 'ts', now)
-redis.call('EXPIRE', key, math.ceil(capacity * refill_sec))
+redis.call('HSET', key, 'tokens', tokens, 'ts', now)
+redis.call('EXPIRE', key, ttl)
 return 1
 `
 
+// On précompile le script : EVALSHA évite de renvoyer le corps Lua à chaque appel.
+var rlScript = redis.NewScript(luaScript)
+
 func (l *Limiter) Allow(key string) bool {
   now := time.Now().UnixMilli()
-  res, err := l.rdb.Eval(ctx, luaScript, []string{key},
+  res, err := rlScript.Run(ctx, l.rdb, []string{key},
     l.capacity, l.refillSec, now).Int()
-  if err != nil { return false }
+  if err != nil {
+    // fail-closed : si Redis est down, on refuse plutôt que de laisser passer
+    // un flood non compté. Choix discutable : certains préfèrent fail-open
+    // pour la dispo. À décider selon le contexte (DDoS vs panne Redis).
+    return false
+  }
   return res == 1
 }
 
@@ -209,6 +229,14 @@ func (l *Limiter) Middleware(next http.HandlerFunc) http.HandlerFunc {
   }
 }
 ```
+
+Points importants de cette implémentation :
+- Le **script Lua** s'exécute de manière atomique dans Redis — c'est crucial. Sans atomicité, deux requêtes simultanées liraient le même compteur (ex: 3 tokens), décideraient toutes les deux d'autoriser, et écriraient chacune `2` : on aurait laissé passer 2 requêtes pour le prix d'une. Avec Lua, la lecture, le calcul du refill et l'écriture forment une seule opération indivisible côté Redis (Redis est mono-thread sur l'exécution des commandes).
+- `redis.NewScript` + `.Run()` utilise `EVALSHA` : le corps du script n'est envoyé qu'une fois, ensuite seul son hash SHA1 transite — moins de bande passante par requête. La lib retombe automatiquement sur `EVAL` si Redis ne connaît pas encore le script (ex: après un flush).
+- `HSET` stocke un hash avec deux champs (`tokens` et `ts`) sous la clé `rl:username` (on utilise `HSET` et non `HMSET`, déprécié depuis Redis 4.0). `EXPIRE` pose une TTL = capacité × taux de refill, ce qui nettoie automatiquement les buckets des utilisateurs inactifs sans job de nettoyage séparé.
+- Le refill est calculé **à la demande** (`elapsed / refill_sec`) plutôt que par un job périodique — technique dite "lazy refill". Aucun processus background, aucun timer, tout se calcule au moment de la requête.
+- `Allow` est **fail-closed** : si Redis tombe, on refuse la requête. C'est un arbitrage disponibilité/sécurité explicite — fail-open laisserait un attaquant flooder l'API pendant une panne Redis. À assumer selon ton modèle de menace.
+- `Retry-After: 60` informe le client de la durée à attendre — conforme à la RFC 6585 (qui définit le code 429), et permet aux clients bien codés de faire un backoff automatique.
 
 > 💡 **Pourquoi un script Lua ?** Sans, on aurait 2 round-trips Redis et une race condition entre lecture et écriture. Lua = atomique côté Redis.
 
@@ -240,6 +268,8 @@ func Can(role Role, action string) bool {
 }
 ```
 
+La convention `action:ressource` (ex: `documents:read`, `users:write`, `admin:configure`) est le standard de facto dans les systèmes d'autorisation modernes (Casbin, Oso, Cedar d'AWS). Elle est lisible dans les logs, testable unitairement, et supporte naturellement les wildcards (`documents:*`). En production, cette map serait stockée en base et chargée au démarrage, pas codée en dur.
+
 Middleware :
 
 ```go
@@ -256,7 +286,11 @@ func RequirePerm(action string) func(http.HandlerFunc) http.HandlerFunc {
 }
 ```
 
-L'`auth middleware` du lab #1 doit poser `X-Role` depuis le claim `role` du JWT.
+Le message d'erreur `"forbidden: requires " + action` est intentionnellement verbeux ici pour faciliter le debug. En production, on renverrait juste `403 Forbidden` sans détail — indiquer quelle permission manque aide un attaquant à cibler ses efforts.
+
+> 🔗 **Continuité avec le Lab #1** — deux petites modifs sur le code du Lab #1 sont nécessaires :
+> 1. **Issuer** : `login` doit lire le rôle depuis la requête (ou la DB) au lieu de le coder en dur. Remplace `"role": "user"` par une valeur lue, ex. `role := r.FormValue("role"); if role == "" { role = "user" }` puis `"role": role`. ⚠️ En vrai, le rôle vient de TA base, jamais d'un champ que le client contrôle — ici c'est uniquement pour tester les différents rôles en lab.
+> 2. **Auth middleware** : après vérification du token, poser le rôle pour le RBAC en aval — `if role, ok := claims["role"].(string); ok { r.Header.Set("X-Role", role) }`. Comme au Lab #1, on a déjà fait `r.Header.Del("X-Role")` en entrée du middleware, donc le client ne peut pas l'usurper.
 
 ## 📋 Étape 3 — Chaîner les middlewares
 
@@ -280,6 +314,8 @@ func main() {
   http.ListenAndServe(":8080", nil)
 }
 ```
+
+L'ordre d'imbrication des middlewares est intentionnel : Auth en premier (pas la peine de toucher à Redis si le token est invalide), Rate-limit en second (on connaît l'utilisateur, on peut compter par user), RBAC en dernier (vérification la plus coûteuse si Casbin est utilisé). Chaque middleware court-circuite la chaîne en retournant directement s'il refuse la requête.
 
 ## 📋 Étape 4 — Tester
 
@@ -311,10 +347,12 @@ done
 ### Tiered limits par rôle
 
 ```
-   Viewer  : 100 req/min   (bucket 100, refill 1/0.6s)
-   Editor  : 500 req/min   (bucket 500, refill 1/0.12s)
-   Admin   : illimité      (skip middleware)
+Viewer  : 100 req/min   (bucket 100, refill 1/0.6s)
+Editor  : 500 req/min   (bucket 500, refill 1/0.12s)
+Admin   : illimité      (skip middleware)
 ```
+
+Les limites différenciées par rôle servent deux objectifs : protéger le service (un viewer ne peut pas saturer l'API) et donner de la valeur aux tiers payants (l'editor ou l'admin ont des quotas plus larges). Le skip total pour l'admin est acceptable si le compte admin est protégé par MFA et que ses actions sont loggées (cf. Lab #3).
 
 ### ABAC en complément (ownership)
 
@@ -324,6 +362,8 @@ if action == "documents:update" && resource.Owner != user.ID {
   return false
 }
 ```
+
+Cette règle ABAC s'ajoute *après* le check RBAC, pas à la place. Un editor a le rôle qui lui donne `documents:update`, mais l'ABAC affine : uniquement sur ses propres documents. C'est le pattern "coarse-grained RBAC + fine-grained ABAC" décrit dans le quiz.
 
 ### Distributed denial : circuit breaker
 

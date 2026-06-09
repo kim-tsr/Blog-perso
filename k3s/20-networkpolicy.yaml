@@ -1,0 +1,66 @@
+# dev.sec.ops — NetworkPolicy : deny-by-default sortant, autorise uniquement
+# DNS (CoreDNS) et le trafic entrant depuis l'Ingress controller (Traefik).
+#
+# Préreq : k3s embarque Flannel par défaut qui ne supporte PAS les NetworkPolicy.
+# Il faut installer Calico, Cilium ou flannel+kube-router pour que ces règles
+# soient effectivement appliquées. Sans CNI compatible, ces règles sont ignorées
+# silencieusement et les pods peuvent sortir librement → vérifier impérativement.
+---
+# 1. Egress : tout bloquer
+apiVersion: networking.k8s.io/v1
+kind: NetworkPolicy
+metadata:
+  name: default-deny-egress
+  namespace: devsecops-labs
+spec:
+  podSelector:
+    matchLabels:
+      app: devsecops-lab
+  policyTypes: ["Egress"]
+  egress: []
+---
+# 2. Egress : autoriser DNS vers CoreDNS uniquement
+apiVersion: networking.k8s.io/v1
+kind: NetworkPolicy
+metadata:
+  name: allow-dns
+  namespace: devsecops-labs
+spec:
+  podSelector:
+    matchLabels:
+      app: devsecops-lab
+  policyTypes: ["Egress"]
+  egress:
+    - to:
+        - namespaceSelector:
+            matchLabels:
+              kubernetes.io/metadata.name: kube-system
+          podSelector:
+            matchLabels:
+              k8s-app: kube-dns
+      ports:
+        - protocol: UDP
+          port: 53
+        - protocol: TCP
+          port: 53
+---
+# 3. Ingress : autoriser uniquement le trafic venant du namespace de l'Ingress
+#    controller (Traefik dans k3s par défaut).
+apiVersion: networking.k8s.io/v1
+kind: NetworkPolicy
+metadata:
+  name: allow-traefik-ingress
+  namespace: devsecops-labs
+spec:
+  podSelector:
+    matchLabels:
+      app: devsecops-lab
+  policyTypes: ["Ingress"]
+  ingress:
+    - from:
+        - namespaceSelector:
+            matchLabels:
+              kubernetes.io/metadata.name: kube-system
+      ports:
+        - protocol: TCP
+          port: 7681

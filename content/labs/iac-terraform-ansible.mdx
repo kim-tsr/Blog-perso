@@ -29,7 +29,7 @@ quiz:
       - "Optionnel"
       - "Une copie du code"
     correct: 1
-    explanation: "State local = un seul dev peut bosser, perte = catastrophe. Remote state + state locking (DynamoDB / API GitLab) = travail en équipe, atomicité. Toujours encrypted-at-rest + access controlled."
+    explanation: "State local = un seul dev peut bosser, perte = catastrophe. Remote state + state locking = travail en équipe, atomicité. Le verrou peut venir d'un lockfile S3 natif (Terraform 1.10+), de l'API GitLab, ou de DynamoDB (legacy). Toujours encrypted-at-rest + access controlled."
   - question: "Quel est l'intérêt principal de la propriété 'idempotence' en Ansible ?"
     options:
       - "Plus rapide"
@@ -56,57 +56,47 @@ quiz:
     explanation: "Pipeline classique : terraform apply → terraform output -json > /tmp/state → ansible-inventory --list lit le state → ansible-playbook tourne sur les hosts à jour. Ou utiliser un état partagé (Consul KV, Vault) pour découplage."
 ---
 
-## 🧠 Théorie : provisioning vs configuration
+## Théorie : deux niveaux d'abstraction, deux outils
 
-```
-   PROVISIONING (Terraform)         CONFIGURATION (Ansible)
-   ────────────────────────         ──────────────────────
-   
-   Crée la VM, le réseau,            Installe nginx,
-   le DNS, le LB, le bucket S3       configure /etc/nginx,
-                                     ouvre firewall, démarre
-   
-   DÉCLARATIF                         IDEMPOTENT
-   "voici l'état désiré"              "amène l'OS à cet état"
-   
-   State file                         Pas de state — l'OS est l'état
-   "cloud level"                      "OS level"
-```
+L'Infrastructure as Code est souvent présentée comme un domaine unifié, mais il cache une ligne de fracture fondamentale : **provisioning** vs **configuration**. Ce n'est pas une question de préférence d'outil — c'est une différence de niveau d'abstraction et de modèle d'état.
 
-Confondre les deux mène à :
-- Provisionner avec Ansible : pas de state, pas de planning, lent.
-- Configurer avec Terraform : oublier les diffs intra-VM, pas idempotent.
+Terraform opère au niveau des **ressources cloud/hyperviseur** : VMs, réseaux, DNS, load balancers, buckets S3, policies IAM. Son modèle est déclaratif et stateful. Tu décris l'état désiré en HCL ; Terraform calcule un diff entre ton code et son state file (qui mappe ta config aux IDs réels), génère un plan d'exécution, et l'applique. Le plan `terraform plan` est la valeur centrale du workflow : avant de toucher à quoi que ce soit, Terraform te montre exactement ce qui sera créé, modifié, ou détruit. Ce plan est aussi un artefact d'audit.
 
-### Pipeline cible
+Ansible opère au niveau de l'**OS** : packages, services, fichiers de configuration, utilisateurs, crontabs. Son modèle est impératif-mais-idempotent. Il se connecte via SSH aux machines existantes et exécute des modules qui vérifient d'abord l'état courant avant d'agir. `apt: name=nginx state=present` installe nginx **seulement si absent** — rejouer le playbook dix fois donne le même résultat qu'une fois. Ansible n'a pas de state file : l'OS lui-même est l'état de référence.
 
-```
-   git push
-       │
-       ▼
-   ┌────────────┐
-   │  CI        │
-   └─────┬──────┘
-         ▼
-   terraform plan → terraform apply (provisionne)
-         │
-         ▼
-   terraform output > inventory.json
-         │
-         ▼
-   ansible-playbook -i inventory.json site.yml (configure)
-         │
-         ▼
-   tests : curl, testinfra, healthchecks
-```
+Confondre les deux niveaux génère des anti-patterns classiques : créer des VMs avec des modules Ansible `command: virsh create` (pas de state, pas de planning, recréé à chaque run), ou configurer `/etc/nginx` avec Terraform `null_resource` + `local-exec` (pas idempotent, pas de diff FS, cauchemar de maintenance).
 
-## 🎯 Objectif
+<Mermaid chart={`
+flowchart TD
+  CODE[Code HCL / YAML\ndans Git] --> TF_PLAN[terraform plan\ncalcule le diff state ↔ désiré]
+  TF_PLAN --> REVIEW{Review humaine\nou CI gate}
+  REVIEW -->|approuvé| TF_APPLY[terraform apply\ncréation des ressources]
+  TF_APPLY --> STATE[State file\nIDs réels enregistrés]
+  TF_APPLY --> VMS[VMs / réseau / DNS\nopérationnels]
+  VMS --> INV[Inventaire dynamique\nterraform output → JSON]
+  INV --> ANS[ansible-playbook\ninstalle + configure l'OS]
+  ANS --> READY[Infrastructure prête]
+  STATE --> TF_PLAN
+`} caption="Pipeline complet Terraform → Ansible : le state est la mémoire de Terraform, l'OS est la mémoire d'Ansible" />
+
+### Le state Terraform : le cerveau du provisioning
+
+Le state est un fichier JSON (`terraform.tfstate`) qui fait le lien entre tes ressources HCL et les objets réels dans le provider (leur ID, leurs attributs actuels). Sans state, Terraform ne sait pas si la ressource existe déjà — il ne peut pas calculer de diff. Avec un state local, deux opérateurs peuvent travailler en parallèle et corrompre le state. En équipe, le state doit être **remote** (S3, GCS, GitLab, Terraform Cloud) avec **locking** (DynamoDB, API GitLab) pour éviter les opérations concurrentes et **encryption** pour protéger les secrets qui y transitent.
+
+### L'idempotence Ansible : la propriété qui change tout
+
+Un module Ansible idempotent ne fait rien si l'état désiré est déjà atteint. Ce comportement se manifeste dans la sortie du play : `changed=0` signifie que rien n'a été modifié — l'hôte est déjà dans l'état souhaité. `changed=N` signifie que N tâches ont effectivement modifié quelque chose. Cette distinction permet de détecter le drift (si un host revient systématiquement avec `changed > 0` alors qu'il venait d'être configuré, quelqu'un modifie la machine entre les runs) et de re-converger en toute sécurité.
+
+L'idempotence est cassée dès qu'on utilise des modules comme `command:` ou `shell:` sans `creates:` ou `changed_when:` — ces modules exécutent toujours et retournent toujours `changed`. C'est l'équivalent d'un `rm -rf` dans un script de déploiement.
+
+## Objectif
 
 1. Provisionner 3 VMs Proxmox via Terraform.
 2. Configurer un cluster k3s via Ansible.
 3. Industrialiser dans un pipeline GitLab CI.
 4. Tester avec Molecule.
 
-## 📋 Étape 1 — Terraform : provisioning Proxmox
+## Étape 1 — Terraform : provisioning Proxmox
 
 ```hcl
 # main.tf
@@ -114,13 +104,19 @@ terraform {
   required_providers {
     proxmox = {
       source  = "bpg/proxmox"
-      version = "~> 0.46"
+      version = "~> 0.60"   # registry.terraform.io/providers/bpg/proxmox (provider 0.x : pin la mineure)
     }
   }
   backend "s3" {
-    bucket = "tf-state-homelab"
-    key    = "k3s-cluster/terraform.tfstate"
-    region = "fr-par"
+    bucket   = "tf-state-homelab"
+    key      = "k3s-cluster/terraform.tfstate"
+    region   = "fr-par"
+    endpoints = { s3 = "https://s3.fr-par.scw.cloud" }
+    # S3-compatible non-AWS (Scaleway, MinIO, Garage...) : désactive les checks AWS
+    skip_credentials_validation = true
+    skip_region_validation      = true
+    skip_requesting_account_id  = true
+    use_path_style              = true
   }
 }
 
@@ -162,6 +158,14 @@ output "nodes" {
 }
 ```
 
+Le bloc `terraform` déclare les providers requis et le backend remote. `source = "bpg/proxmox"` est le provider communautaire de référence pour Proxmox (`registry.terraform.io/providers/bpg/proxmox`), bien plus complet que le provider Telmate historique aujourd'hui abandonné. Subtilité du `version` : `bpg/proxmox` est en `0.x`, donc l'opérateur pessimiste `~> 0.60` autorise toute mineure `>= 0.60.0` et `< 1.0.0` (en SemVer pré-1.0, la mineure peut introduire des breaking changes — épinglez et testez avant de monter). Le bloc `backend "s3"` configure le remote state : ici un bucket S3-compatible (Scaleway Object Storage), avec `key` comme chemin dans le bucket. Point clé pour tout endpoint **non-AWS** (Scaleway, MinIO, Garage, Ceph RGW...) : le backend S3 valide par défaut la région et le compte comme s'il parlait à AWS, ce qui fait échouer un `terraform init` sur un `fr-par`. Les flags `skip_*` + `endpoints.s3` + `use_path_style` désactivent ces vérifications et pointent vers le bon endpoint. Activez le versioning côté bucket pour conserver l'historique du state, et l'object-lock pour le state locking (le backend S3 natif sait verrouiller via une condition conditionnelle S3 depuis Terraform 1.10, plus besoin de DynamoDB).
+
+Le bloc `provider "proxmox"` instancie le plugin provider avec les credentials. Ne jamais mettre de token en clair dans le HCL — utiliser des variables (ici `var.pve_token`) alimentées par des variables d'environnement (`TF_VAR_pve_token`) ou un secret manager en CI.
+
+`resource "proxmox_virtual_environment_vm" "k8s_node"` déclare une ressource de type `proxmox_virtual_environment_vm` avec le nom local `k8s_node`. `count = 3` instancie trois copies identiques numérotées de 0 à 2 — `count.index` donne l'indice courant. Le bloc `clone` crée chaque VM à partir d'un template cloud-init (VM ID 9000). Le bloc `initialization` injecte la configuration réseau et le compte SSH via cloud-init au premier démarrage.
+
+Le bloc `output "nodes"` expose les IPs sous forme d'une map `nom → IP` après `terraform apply`. C'est cette sortie qu'Ansible va consommer via l'inventaire dynamique.
+
 ```bash
 terraform init
 terraform plan -out plan.bin
@@ -169,7 +173,9 @@ terraform apply plan.bin
 terraform output -json nodes
 ```
 
-## 📋 Étape 2 — Inventaire Ansible dynamique
+`terraform init` télécharge les providers et configure le backend. `terraform plan -out plan.bin` calcule le diff et sérialise le plan dans un fichier binaire — ce fichier garantit que `terraform apply plan.bin` appliquera exactement ce qui a été planifié, sans recalculer. C'est le mécanisme de promotion plan → apply utilisé en CI pour éviter les surprises entre la review et l'exécution.
+
+## Étape 2 — Inventaire Ansible dynamique
 
 ```python
 # inventory/terraform.py
@@ -184,12 +190,14 @@ inv = {
 print(json.dumps(inv))
 ```
 
+Un inventaire dynamique Ansible est un script exécutable qui retourne du JSON sur stdout dans un format précis. Quand Ansible reçoit `-i inventory/terraform.py`, il exécute le script avec `--list` (implicite ici) et parse la sortie. La structure `all → children → k3s → hosts` crée le groupe `k3s` avec chaque VM comme host. Le champ `_meta.hostvars` injecte des variables par host (ici `ansible_user`) sans round-trip supplémentaire. Cette approche élimine le copier-coller d'IPs : le pipeline Terraform → Ansible est entièrement automatisé.
+
 ```bash
 chmod +x inventory/terraform.py
 ansible -i inventory/terraform.py all -m ping
 ```
 
-## 📋 Étape 3 — Rôle Ansible : install k3s
+## Étape 3 — Rôle Ansible : install k3s
 
 ```yaml
 # roles/k3s/tasks/main.yml
@@ -227,6 +235,12 @@ ansible -i inventory/terraform.py all -m ping
   when: inventory_hostname != groups['k3s'][0]
 ```
 
+Le module `apt` est idempotent : `state: present` vérifie que les paquets sont installés sans les réinstaller s'ils le sont déjà. `update_cache: yes` lance un `apt-get update` avant — à utiliser avec `cache_valid_time: 3600` en production pour éviter de le relancer si le cache est récent.
+
+La tâche "Bootstrap server" utilise `shell:` (non idempotent par nature) mais avec `args.creates:` : Ansible skipe la tâche si `/etc/rancher/k3s/k3s.yaml` existe déjà. C'est le pattern d'idempotence pour les opérations one-shot. La condition `when:` cible uniquement le premier node du groupe.
+
+Le module `slurp` lit un fichier distant et retourne son contenu encodé en base64 dans la variable `register`. Le filtre `| b64decode | trim` dans la tâche suivante décode et supprime le saut de ligne final — ce pattern est l'alternative idempotente à `fetch` + `lookup('file')`.
+
 ```yaml
 # site.yml
 - hosts: k3s
@@ -239,7 +253,7 @@ ansible -i inventory/terraform.py all -m ping
 ansible-playbook -i inventory/terraform.py site.yml
 ```
 
-## 📋 Étape 4 — Tests Molecule
+## Étape 4 — Tests Molecule
 
 ```yaml
 # roles/k3s/molecule/default/molecule.yml
@@ -256,6 +270,8 @@ verifier:
   name: ansible
 ```
 
+Molecule orchestre le cycle de vie complet d'un test de rôle : `create` (lance un container ou une VM), `converge` (exécute le rôle), `idempotence` (exécute le rôle une seconde fois et vérifie `changed=0`), `verify` (lance les tests), `destroy` (nettoie). Le test d'idempotence est la vérification automatique la plus précieuse : si le rôle modifie quelque chose au deuxième run, il y a une tâche non-idempotente à corriger.
+
 ```yaml
 # roles/k3s/molecule/default/verify.yml
 - hosts: all
@@ -269,12 +285,14 @@ verifier:
         that: "'Ready' in kubectl.stdout"
 ```
 
+`changed_when: false` marque cette tâche comme "toujours ok" — elle ne modifie rien, c'est une lecture. Sans ce flag, chaque exécution de `command:` retourne `changed=1` ce qui fausserait le test d'idempotence. Le module `assert` lève une erreur Ansible si la condition est fausse — équivalent d'un `assert` dans un test unitaire.
+
 ```bash
 cd roles/k3s
 molecule test    # create → converge → idempotence → verify → destroy
 ```
 
-## 📋 Étape 5 — Pipeline GitLab CI
+## Étape 5 — Pipeline GitLab CI
 
 ```yaml
 # .gitlab-ci.yml
@@ -285,14 +303,14 @@ variables:
   TF_ROOT: terraform/
 
 plan:
-  image: hashicorp/terraform:1.7
+  image: hashicorp/terraform:1.10
   script:
     - cd $TF_ROOT
     - terraform init
     - terraform plan -out=plan.bin
 
 apply:
-  image: hashicorp/terraform:1.7
+  image: hashicorp/terraform:1.10
   needs: [plan]
   when: manual
   script:
@@ -307,9 +325,19 @@ configure:
     - ansible-playbook -i inventory/terraform.py site.yml
 ```
 
-> 💡 `terraform apply` MANUEL pour éviter les destructions accidentelles, MAIS `terraform plan` automatique dans la MR pour code review du diff.
+La stage `plan` est automatique (chaque push) — elle génère le plan Terraform en CI, ce qui permet au reviewer de voir exactement ce qui va changer sans avoir Terraform en local. La stage `apply` est manuelle (`when: manual`) — un humain doit cliquer pour déclencher la destruction/création réelle. C'est le garde-fou essentiel contre les suppressions accidentelles. La stage `configure` a un `--check` (dry run Ansible) suivi de l'application réelle : le dry run détecte les erreurs de syntax et de connexion sans modifier les hôtes.
 
-## 🧠 Pitfalls
+<Pipeline steps={[
+  { label: "git push / PR", hint: "déclenche la CI", accent: "v" },
+  { label: "terraform plan", hint: "diff automatique visible en MR", accent: "c" },
+  { label: "terraform apply", hint: "déclenchement MANUEL", accent: "a" },
+  { label: "ansible --check", hint: "dry run de configuration", accent: "s" },
+  { label: "ansible-playbook", hint: "configuration effective", accent: "v" }
+]} caption="Pipeline GitLab CI : plan automatique, apply manuel, configure automatique après apply" />
+
+> `terraform apply` MANUEL pour éviter les destructions accidentelles, MAIS `terraform plan` automatique dans la MR pour code review du diff.
+
+## Pitfalls
 
 ❌ **State local en équipe** : conflit garanti.
 ❌ **Secrets en clair dans HCL** : utilise variables d'env ou Vault.
@@ -317,14 +345,14 @@ configure:
 ❌ **`apt update` à chaque tâche** : lent. Utilise un block `pre_tasks` + `cache_valid_time`.
 ❌ **Provisionner sans destroy plan** : terraform peut détruire en cas de drift entre state et infra.
 
-## ✅ Validation
+## Validation
 
 - `terraform plan` montre 0 changes après apply
 - Re-jouer `ansible-playbook` → tout `ok=N changed=0`
 - `kubectl get nodes` → 3 nodes Ready
 - Molecule test passe en CI
 
-## 🚀 Pour aller plus loin
+## Pour aller plus loin
 
 - **OpenTofu** : fork open source (et stable) de Terraform après le changement de licence HashiCorp
 - **Terragrunt** : DRY pour stack multi-env Terraform

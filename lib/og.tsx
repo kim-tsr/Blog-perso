@@ -6,9 +6,10 @@ export const OG_SIZE = { width: 1200, height: 630 }
 export const OG_CONTENT_TYPE = 'image/png'
 
 const THEME_COLORS: Record<ArticleTheme, { accent: string; glow: string; label: string }> = {
-  violet: { accent: '#a78bfa', glow: 'rgba(167, 139, 250, 0.35)', label: 'INFRASTRUCTURE' },
-  cyan:   { accent: '#67e8f9', glow: 'rgba(103, 232, 249, 0.35)', label: 'CYBERSÉCURITÉ' },
-  amber:  { accent: '#fbbf24', glow: 'rgba(251, 191, 36, 0.35)',  label: 'RÉSEAU' },
+  violet:  { accent: '#a78bfa', glow: 'rgba(167, 139, 250, 0.35)', label: 'INFRASTRUCTURE' },
+  cyan:    { accent: '#67e8f9', glow: 'rgba(103, 232, 249, 0.35)', label: 'CYBERSÉCURITÉ' },
+  amber:   { accent: '#fbbf24', glow: 'rgba(251, 191, 36, 0.35)',  label: 'RÉSEAU' },
+  magenta: { accent: '#e879c4', glow: 'rgba(232, 121, 196, 0.35)', label: 'SYSTÈMES' },
 }
 
 interface OgProps {

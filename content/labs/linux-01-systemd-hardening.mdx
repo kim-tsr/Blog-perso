@@ -2,8 +2,8 @@
 title: "Linux #1 — Durcir un service systemd"
 slug: linux-01-systemd-hardening
 objective: "Comprendre l'unit systemd, écrire un service réaliste, puis le sandboxer avec les directives ProtectSystem, PrivateTmp, NoNewPrivileges, RestrictAddressFamilies — sans toucher au code de l'app."
-tag: Cybersécurité
-theme: cyan
+tag: Systèmes
+theme: magenta
 difficulty: intermédiaire
 duration: "55 min"
 minRole: pro
@@ -16,6 +16,7 @@ tools:
   - "systemd"
   - "systemd-analyze security"
   - "systemctl"
+sandboxable: true
 quiz:
   - question: "Quel est le principe du 'privilege separation' appliqué à un daemon ?"
     options:
@@ -61,29 +62,23 @@ quiz:
 
 ## 🧠 Théorie : un service systemd, c'est quoi exactement ?
 
-```
-   /etc/systemd/system/myapp.service       ← l'unit (config déclarative)
-              │
-              ▼
-   systemctl start myapp
-              │
-              ▼
-   PID 1 (systemd) fork + apply directives:
-       ┌────────────────────────────────────┐
-       │  setuid(www-data)                  │
-       │  setns(mount/pid/net/...) si dirs  │
-       │  cgroup v2 placement               │
-       │  apply NoNewPrivileges             │
-       │  apply RestrictAddressFamilies     │
-       │  apply seccomp filter              │
-       │  exec /usr/bin/myapp               │
-       └────────────────────────────────────┘
-              │
-              ▼
-   Le process tourne dans une jail
-   construite par systemd, sans
-   que le code app ait été touché.
-```
+systemd est le PID 1 de toutes les distributions Linux modernes. Il gère les **units** — fichiers déclaratifs `.service`, `.socket`, `.timer`, `.mount` — qui décrivent comment démarrer un process, dans quel ordre et avec quelle configuration de sécurité.
+
+Ce qui rend systemd puissant d'un point de vue sécurité, c'est qu'il configure l'environnement d'exécution du daemon **avant** de l'exécuter, en appelant directement des primitives kernel : `setuid()`, `clone()` pour les namespaces, `prctl()` pour les flags process, `seccomp()` pour les filtres syscall, et des `mount()` pour les vues FS privées. Tout cela se passe entre le `fork()` de systemd et le `execve()` du binaire applicatif — le binaire ne sait même pas qu'il est sandboxé.
+
+Le principe fondamental est la **séparation des privilèges** : un service ne devrait avoir que les permissions dont il a strictement besoin, ni plus. Un service web n'a pas besoin de lire `/etc/shadow`. Un collecteur de logs n'a pas besoin d'ouvrir des raw sockets. Chaque permission non nécessaire est une surface d'attaque potentielle. Si un attaquant exploite une vulnérabilité dans votre service, ses capacités sont limitées aux permissions que vous avez accordées — c'est le principe du **blast radius**.
+
+Le score `systemd-analyze security` quantifie cette surface d'exposition sur une échelle de 0 (service totalement sandboxé) à 10 (service root sans aucune protection). L'objectif de ce lab est de passer d'un score ≥ 9 à un score ≤ 2.
+
+<Mermaid chart={`
+flowchart TD
+    A["Unit file\n/etc/systemd/system/myapp.service"] --> B["systemctl start myapp"]
+    B --> C["PID 1 — systemd fork()"]
+    C --> D["Applique les directives\nsetuid · setns · prctl\nmount namespaces · seccomp"]
+    D --> E["execve /usr/bin/myapp"]
+    E --> F["Process tourne\ndans la jail systemd"]
+    F --> G["Code app\nnon modifié"]
+`} caption="Cycle de vie d'un service systemd : la jail est construite avant execve, sans toucher au code applicatif" />
 
 ### Anatomie minimale d'une unit
 
@@ -100,30 +95,41 @@ Restart=on-failure
 WantedBy=multi-user.target
 ```
 
+La section `[Unit]` déclare les métadonnées et l'ordre de démarrage (`After=network.target` signifie que le service ne démarre qu'après que la pile réseau est disponible). La section `[Service]` contient la configuration d'exécution. La section `[Install]` détermine dans quel target systemd charge ce service.
+
 C'est minimal mais **pas sécurisé** : tourne en root, voit tout le filesystem, peut faire setuid, ouvrir n'importe quel port, faire du raw socket, etc.
 
 ### Catalogue des directives de sandboxing (les essentielles)
 
-| Directive | Effet |
-|---|---|
-| `User=`, `Group=` | Drop vers un user dédié sans shell |
-| `DynamicUser=true` | systemd crée un UID éphémère unique (encore mieux) |
-| `NoNewPrivileges=true` | Bloque setuid/file capabilities |
-| `ProtectSystem=strict` | / en read-only sauf /dev /proc /sys |
-| `ProtectHome=true` | Cache /home /root /run/user |
-| `PrivateTmp=true` | /tmp namespacé privé |
-| `PrivateDevices=true` | Pas d'accès aux devices physiques |
-| `PrivateNetwork=true` | Pas de réseau du tout (utile pour batch local) |
-| `ProtectKernelTunables=true` | /proc/sys et /sys read-only |
-| `ProtectKernelModules=true` | Pas de modprobe |
-| `ProtectControlGroups=true` | cgroups read-only |
-| `RestrictAddressFamilies=AF_INET AF_INET6` | Whitelist familles socket |
-| `RestrictNamespaces=true` | Pas de unshare/clone |
-| `LockPersonality=true` | Bloque le syscall personality (anti-bypass ASLR) |
-| `MemoryDenyWriteExecute=true` | W^X enforcé (anti-shellcode) |
-| `SystemCallFilter=@system-service` | Allowlist de syscalls (seccomp) |
-| `CapabilityBoundingSet=` | Whitelist des capabilities (vide = aucune) |
-| `ReadOnlyPaths=`, `ReadWritePaths=` | Override granulaire du FS |
+Chaque directive ci-dessous correspond à une ou plusieurs primitives kernel appelées par systemd avant `execve()` :
+
+| Directive | Primitive kernel | Effet |
+|---|---|---|
+| `User=`, `Group=` | `setuid()`, `setgid()` | Drop vers un user dédié sans shell |
+| `DynamicUser=true` | `setuid()` + allocation UID | systemd crée un UID éphémère unique (encore mieux) |
+| `NoNewPrivileges=true` | `prctl(PR_SET_NO_NEW_PRIVS)` | Bloque setuid/file capabilities — hérité par tous les enfants |
+| `ProtectSystem=strict` | `mount()` bind read-only | / en read-only sauf /dev /proc /sys |
+| `ProtectHome=true` | `mount()` tmpfs | Cache /home /root /run/user (apparaissent vides) |
+| `PrivateTmp=true` | `clone(CLONE_NEWNS)` + mount | /tmp namespacé privé, invisible des autres services |
+| `PrivateDevices=true` | mount namespace | Pas d'accès aux devices physiques |
+| `PrivateNetwork=true` | `clone(CLONE_NEWNET)` | Namespace réseau vide (utile pour batch local) |
+| `ProtectKernelTunables=true` | mount read-only | /proc/sys et /sys read-only |
+| `ProtectKernelModules=true` | `seccomp` | Pas de modprobe/insmod |
+| `ProtectControlGroups=true` | mount read-only | cgroups read-only |
+| `RestrictAddressFamilies=AF_INET AF_INET6` | `seccomp` sur `socket()` | Whitelist familles socket |
+| `RestrictNamespaces=true` | `seccomp` sur `unshare`/`clone` | Pas de création de namespace |
+| `LockPersonality=true` | `seccomp` sur `personality()` | Bloque le bypass ASLR via personality |
+| `MemoryDenyWriteExecute=true` | `seccomp` sur `mmap`/`mprotect` | W^X enforcé (anti-shellcode) |
+| `SystemCallFilter=@system-service` | `seccomp` BPF | Allowlist de syscalls prédéfinie par systemd |
+| `CapabilityBoundingSet=` | `prctl(PR_CAPBSET_DROP)` | Whitelist du bounding set des capabilities (vide = aucune) |
+| `ReadOnlyPaths=`, `ReadWritePaths=` | `mount()` | Override granulaire du FS |
+
+<Stack layers={[
+  { label: 'Application (myapp)', accent: 'v' },
+  { label: 'Jail systemd (namespaces + seccomp + caps)', accent: 'c', hint: 'NoNewPrivs · ProtectSystem · RestrictAddressFamilies' },
+  { label: 'Kernel Linux', accent: 's', hint: 'Applique les règles avant execve()' },
+  { label: 'Hardware', accent: 'dim' },
+]} bottom="last" caption="La jail est une couche entre le code app et le kernel — sans modifier le binaire" />
 
 ## 🎯 Objectif
 
@@ -147,6 +153,8 @@ EOF
 sudo chmod +x /usr/local/bin/myapp
 ```
 
+On crée un serveur HTTP Python minimaliste qui écoute sur `127.0.0.1:8080`. Le but n'est pas l'app elle-même mais son environnement d'exécution — on va constater que sans directives de sécurité, le service a accès à tout le système.
+
 Unit naïve :
 
 ```ini
@@ -163,6 +171,8 @@ Restart=on-failure
 WantedBy=multi-user.target
 ```
 
+Sans `User=`, le service tourne en **root** (UID 0). Sans aucune directive de namespace ou de seccomp, il hérite du contexte complet de systemd : accès au filesystem entier, toutes les capabilities, tous les syscalls disponibles.
+
 ```bash
 sudo systemctl daemon-reload
 sudo systemctl enable --now myapp
@@ -174,6 +184,8 @@ Mesurez la dette de sécurité :
 ```bash
 sudo systemd-analyze security myapp
 ```
+
+`systemd-analyze security` inspecte chaque directive de sandboxing connue et calcule un score pondéré. Chaque directive manquante contribue à la note d'exposition.
 
 → score autour de **9.6 UNSAFE**. Le rapport liste tout ce qui n'est pas activé.
 
@@ -205,6 +217,10 @@ ProtectProc=invisible
 ProcSubset=pid
 ```
 
+`DynamicUser=true` demande à systemd d'allouer un UID unique à la volée — pas de compte système permanent à maintenir, pas de UID prévisible à cibler. `ProtectProc=invisible` cache les entrées `/proc/<pid>` des autres utilisateurs. `ProcSubset=pid` restreint encore plus : le service ne voit que ses propres PIDs dans `/proc`.
+
+> 💡 `DynamicUser=true` n'est pas qu'un drop d'UID : il implique automatiquement `ProtectSystem=strict`, `ProtectHome=read-only`, `PrivateTmp=true` et `RemoveIPC=true`. On les laisse explicites ci-dessous pour la pédagogie, mais sache que poser `DynamicUser=true` durcit déjà fortement le service. Risque si omis : un UID statique partagé entre plusieurs services laisse un fichier laissé par un service compromis lisible par les autres.
+
 ```bash
 sudo systemctl daemon-reload
 sudo systemctl restart myapp
@@ -232,6 +248,12 @@ LockPersonality=true
 MemoryDenyWriteExecute=true
 ```
 
+`RestrictAddressFamilies` génère un filtre seccomp sur le syscall `socket()` : seuls `AF_INET` et `AF_INET6` sont autorisés. Un exploit tentant d'ouvrir une socket `AF_NETLINK` (pour communiquer avec le kernel) ou `AF_PACKET` (raw packets) obtiendra `EPERM`.
+
+`LockPersonality` bloque `personality()`, un syscall obscur qui permet de changer le mode d'exécution du process (ex: mode 32 bits) — utilisé par certains exploits pour désactiver l'ASLR.
+
+`MemoryDenyWriteExecute` interdit les pages mémoire simultanément inscriptibles et exécutables via `mmap()`/`mprotect()`. C'est la défense W^X (Write XOR Execute) : un shellcode doit d'abord être écrit en mémoire puis exécuté — cette directive rend cette séquence impossible.
+
 ## 📋 Étape 4 — Capabilities et syscalls
 
 ```ini
@@ -246,7 +268,13 @@ SystemCallErrorNumber=EPERM
 SystemCallArchitectures=native
 ```
 
-> 💡 `@system-service` couvre 99% des besoins d'un service userland (read/write/poll/etc). Les `~@privileged @resources` retirent les sous-ensembles dangereux (`ptrace`, `mount`, `setns`, `unshare`, `bpf`, `chroot`).
+`CapabilityBoundingSet=` (vide) retire toutes les capabilities du bounding set — le plafond absolu. Même si le binaire avait des file capabilities, il ne pourrait pas les activer. `AmbientCapabilities=` vide garantit qu'aucune capability n'est transmise aux processus enfants via le mécanisme ambient.
+
+`SystemCallFilter=@system-service` installe un filtre seccomp allowlist basé sur l'ensemble prédéfini `@system-service` : environ 200 syscalls couvrant les besoins d'un service userland normal (read, write, poll, socket, etc.). La ligne `~@privileged @resources` retire de cet ensemble les sous-groupes dangereux (`ptrace`, `mount`, `setns`, `unshare`, `bpf`, `chroot`).
+
+`SystemCallErrorNumber=EPERM` configure la réponse à un syscall bloqué : retourner l'erreur `EPERM` (-1) au lieu de tuer le process avec `SIGSYS`. Préférable en prod pour éviter des crashs non désirés.
+
+> `@system-service` couvre 99% des besoins d'un service userland (read/write/poll/etc). Les `~@privileged @resources` retirent les sous-ensembles dangereux (`ptrace`, `mount`, `setns`, `unshare`, `bpf`, `chroot`).
 
 ## 📋 Étape 5 — FS write granulaire
 
@@ -262,6 +290,8 @@ RuntimeDirectory=myapp         # /run/myapp (volatile)
 # OU explicite :
 # ReadWritePaths=/var/lib/myapp
 ```
+
+`StateDirectory`, `CacheDirectory`, `LogsDirectory`, `RuntimeDirectory` sont des directives de haut niveau : systemd crée le répertoire, l'assigne (`chown`) à l'utilisateur du service, et l'ajoute automatiquement à la liste d'écriture. Avec `ProtectSystem=strict`, seuls ces chemins sont inscriptibles — tout le reste du filesystem est en lecture seule.
 
 > ⚠️ **Évite `ReadWritePaths=/var/log`** : trop large. Préfère `LogsDirectory` qui crée juste `/var/log/myapp`.
 
@@ -322,10 +352,18 @@ sudo systemd-analyze security myapp
 
 → score typiquement **0.8-1.5 OK** (ou mieux). Compare avec le départ à 9.6.
 
+<Pipeline steps={[
+  { label: 'Score 9.6', hint: 'Service root, aucune directive', accent: 'a' },
+  { label: 'Étape 2', hint: 'User · Namespaces FS → ~3.5', accent: 'a' },
+  { label: 'Étape 3', hint: 'Réseau · Namespaces · W^X → ~2.5', accent: 'c' },
+  { label: 'Étape 4', hint: 'Caps drop · Seccomp → ~1.5', accent: 's' },
+  { label: 'Score ≤ 1.5', hint: 'Service sandboxé — blast radius minimal', accent: 'v' },
+]} caption="Progression du durcissement : chaque étape réduit la surface d'attaque mesurée" />
+
 ## 🧠 Pitfalls courants
 
 ❌ **Mettre toutes les directives d'un coup et débugger** : restart par restart, observe les `journalctl -u myapp` pour comprendre quel filtre tue ton service.
-❌ **`CapabilityBoundingSet=CAP_NET_BIND_SERVICE` pour binder port 80** : non, utilise `AmbientCapabilities=` ou délègue à un reverse proxy.
+❌ **`CapabilityBoundingSet=CAP_NET_BIND_SERVICE` SEUL pour binder port 80** : le bounding set est un plafond, il n'accorde rien. Pour qu'un service non-root bind un port < 1024, il faut `AmbientCapabilities=CAP_NET_BIND_SERVICE` ET garder cette cap dans `CapabilityBoundingSet=`. Sinon, délègue le port privilégié à un reverse proxy. On détaille ce mécanisme exact au lab #2.
 ❌ **`PrivateNetwork=true` puis chercher pourquoi Redis ne répond pas** : ce flag coupe TOUT le réseau, même localhost vers un autre namespace.
 ❌ **Oublier `daemon-reload`** : la modif d'unit reste invisible jusqu'à là.
 ❌ **Penser que ces protections remplacent l'audit du code** : non, elles limitent les dégâts. Le code reste à auditer.
@@ -336,12 +374,17 @@ sudo systemd-analyze security myapp
 # 1. Le service tourne toujours
 curl http://127.0.0.1:8080/
 
-# 2. Tentative d'écriture sur / → refusée
-sudo systemctl exec myapp -- /bin/sh -c 'echo x > /etc/x' 2>&1
+# 2. Tentative d'écriture sur / dans le MÊME contexte de sandbox que myapp
+# systemd-run --property=... rejoue les directives sur une commande de test :
+sudo systemd-run --pty \
+  --property=ProtectSystem=strict \
+  --property=ProtectHome=true \
+  /bin/sh -c 'echo x > /etc/x' 2>&1
 # → Read-only file system
 
-# 3. Tentative de syscall interdit
-# (depuis le process : impossible sans modifier le code, mais le filter est actif)
+# 3. Vérifier les caps réellement présentes dans le process (doit être 0)
+grep CapEff /proc/$(systemctl show -p MainPID --value myapp)/status
+# → CapEff: 0000000000000000
 
 # 4. systemd-analyze
 sudo systemd-analyze security myapp

@@ -1,0 +1,10 @@
+# dev.sec.ops — Namespace dédié aux sandbox éphémères de labs
+# Tous les pods éphémères vivent ici. Labels pour le ServiceAccount + NetworkPolicy.
+apiVersion: v1
+kind: Namespace
+metadata:
+  name: devsecops-labs
+  labels:
+    pod-security.kubernetes.io/enforce: restricted
+    pod-security.kubernetes.io/audit: restricted
+    pod-security.kubernetes.io/warn: restricted
