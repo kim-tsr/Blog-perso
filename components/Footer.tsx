@@ -1,29 +1,14 @@
 import Link from 'next/link'
-import NewsletterSignup from './NewsletterSignup'
 import ThemeToggle from './ThemeToggle'
 
 const FOOTER_LINKS = [
   {
-    label: 'Contenu',
+    label: 'Pages',
     items: [
-      { href: '/labs',     name: 'Labs' },
-      { href: '/roadmap',  name: 'Parcours' },
       { href: '/projets',  name: 'Projets' },
-      { href: '/feed.xml', name: 'RSS', external: true },
-    ],
-  },
-  {
-    label: 'Compte',
-    items: [
-      { href: '/account',        name: 'Mon compte' },
-      { href: '/auth/signin',    name: 'Se connecter' },
-    ],
-  },
-  {
-    label: 'Le site',
-    items: [
-      { href: '/a-propos',       name: 'À propos' },
-      { href: '/design-system',  name: 'Design system' },
+      { href: '/technos',  name: 'Technos' },
+      { href: '/a-propos', name: 'À propos' },
+      { href: '/contact',  name: 'Contact' },
     ],
   },
 ]
@@ -32,7 +17,7 @@ export default function Footer() {
   return (
     <footer style={{ borderTop:'1px solid var(--border)', background:'var(--bg)' }}>
       <style>{`
-        .ft-top { max-width:1120px; margin:0 auto; padding:64px 48px 36px; display:grid; grid-template-columns:1.4fr repeat(3, 1fr); gap:48px; }
+        .ft-top { max-width:1120px; margin:0 auto; padding:64px 48px 36px; display:grid; grid-template-columns:1.4fr repeat(1, 1fr); gap:48px; }
         .ft-brand-block .fl { font-family:var(--fd); font-size:18px; font-weight:700; letter-spacing:-.01em; }
         .ft-brand-block .fl b { color:var(--v); }
         .ft-brand-block p { font-size:13px; color:var(--mid); margin-top:14px; line-height:1.7; font-weight:300; max-width:280px; }
@@ -54,10 +39,7 @@ export default function Footer() {
       <div className="ft-top">
         <div className="ft-brand-block">
           <span className="fl">dev.<b>sec</b>.ops</span>
-          <p>Tutoriels et notes techniques sur l&apos;infrastructure, la cybersécurité et le réseau. Écrits avec rigueur et curiosité.</p>
-          <div style={{ marginTop:18 }}>
-            <NewsletterSignup variant="inline" sourcePage="footer" />
-          </div>
+          <p>Étudiant ingénieur cybersécurité à l&apos;EPITA Rennes. Stage de fin d&apos;études DevSecOps dès février 2027.</p>
         </div>
         {FOOTER_LINKS.map(col => (
           <div key={col.label} className="ft-col">
@@ -65,9 +47,7 @@ export default function Footer() {
             <ul>
               {col.items.map(it => (
                 <li key={it.href}>
-                  {('external' in it && it.external)
-                    ? <a href={it.href}>{it.name}</a>
-                    : <Link href={it.href}>{it.name}</Link>}
+                  <Link href={it.href}>{it.name}</Link>
                 </li>
               ))}
             </ul>
@@ -76,7 +56,7 @@ export default function Footer() {
       </div>
 
       <div className="ft-bottom">
-        <span className="fc">© 2026 dev.sec.ops — Fait avec rigueur &amp; curiosité.</span>
+        <span className="fc">© 2026 Kim Tessier</span>
         <div style={{display:'flex',gap:14, alignItems:'center'}}>
           <ThemeToggle />
           <a href="https://github.com/kim-tsr" target="_blank" rel="noopener noreferrer" className="fsoc" aria-label="GitHub">

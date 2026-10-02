@@ -4,10 +4,10 @@ import Link from 'next/link'
 import HeroCanvas from './HeroCanvas'
 
 const LINES = [
-  "Tutoriels sur l'infrastructure moderne.",
-  "Guides pratiques en cybersécurité.",
-  "Concepts réseau vulgarisés.",
-  "Du DevOps au DevSecOps.",
+  "Stage de fin d'études dès février 2027.",
+  "Pipelines CI/CD sécurisés et supply chain.",
+  "Kubernetes, GitOps et Infrastructure as Code.",
+  "Étudiant ingénieur cybersécurité, EPITA Rennes.",
 ]
 
 export default function Hero() {
@@ -61,23 +61,23 @@ export default function Hero() {
         <div className="hero-inner">
           <div className="hero-eyebrow">
             <div className="eyebrow-line" />
-            <span>Blog DevSecOps — Infrastructure &amp; Sécurité</span>
+            <span>Kim Tessier — Étudiant ingénieur cybersécurité</span>
           </div>
-          <h1 className="hero-title" aria-label="Comprendre. Sécuriser. Partager.">
-            <span className="hero-word"><span className="hero-word-inner" style={{animationDelay:'.35s'}}>Comprendre.</span></span><br />
-            <span className="hero-word"><span className="hero-word-inner accent" style={{animationDelay:'.55s'}}>Sécuriser.</span></span><br />
-            <span className="hero-word"><span className="hero-word-inner grad" style={{animationDelay:'.75s'}}>Partager.</span></span>
+          <h1 className="hero-title" aria-label="DevSecOps. Infrastructures. Supply chain.">
+            <span className="hero-word"><span className="hero-word-inner" style={{animationDelay:'.35s'}}>DevSecOps.</span></span><br />
+            <span className="hero-word"><span className="hero-word-inner accent" style={{animationDelay:'.55s'}}>Infra.</span></span><br />
+            <span className="hero-word"><span className="hero-word-inner grad" style={{animationDelay:'.75s'}}>Supply chain.</span></span>
           </h1>
           <p className="hero-sub">
             <span ref={tw} />
             <span className="hero-cursor-el" aria-hidden="true" />
           </p>
           <div className="hero-btns">
-            <Link href="/blog" className="btn-p">
-              Explorer les articles
+            <Link href="/projets" className="btn-p">
+              Voir mes projets
               <svg width="13" height="13" viewBox="0 0 13 13" fill="none" aria-hidden="true"><path d="M2 6.5h9M8 3l3.5 3.5L8 10" stroke="currentColor" strokeWidth="1.5" strokeLinecap="round" strokeLinejoin="round"/></svg>
             </Link>
-            <Link href="/a-propos" className="btn-g">À propos</Link>
+            <a href="/CV_Kim_Tessier.pdf" className="btn-g" download>Télécharger mon CV</a>
           </div>
         </div>
       </div>

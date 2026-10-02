@@ -2,19 +2,15 @@
 import { useEffect, useRef } from 'react'
 import Link from 'next/link'
 import { usePathname } from 'next/navigation'
-import UserMenu from './UserMenu'
-import SearchPalette from './SearchPalette'
-import { Profile } from '@/lib/auth'
-import type { LabMeta } from '@/lib/labs'
 
 const LINKS = [
-  { href: '/labs',      label: 'Labs' },
-  { href: '/roadmap',   label: 'Parcours' },
   { href: '/projets',   label: 'Projets' },
+  { href: '/technos',   label: 'Technos' },
   { href: '/a-propos',  label: 'À propos' },
+  { href: '/contact',   label: 'Contact' },
 ]
 
-export default function NavClient({ profile, labs }: { profile: Profile | null; labs: LabMeta[] }) {
+export default function NavClient() {
   const nav = useRef<HTMLElement>(null)
   const pathname = usePathname()
 
@@ -42,9 +38,9 @@ export default function NavClient({ profile, labs }: { profile: Profile | null; 
         .nav-logo b { color: var(--v); }
         .nav-cta { border: 1px solid rgba(255,255,255,0.12); background: rgba(255,255,255,0.04); color: var(--text); padding: 8px 22px; border-radius: 100px; font-size: 13px; font-weight: 600; cursor: pointer; transition: border-color .2s, background .2s; }
         .nav-cta:hover { border-color: var(--v); background: oklch(0.68 0.24 280 / 0.1); }
-        @media(max-width:768px) { nav#nav { padding: 14px 24px; } .nav-links { display: none; } }
+        @media(max-width:768px) { nav#nav { padding: 14px 24px; } .nav-links { gap: 14px; } .nav-cta { display: none; } }
       `}</style>
-      <Link href="/" className="nav-logo">dev.<b>sec</b>.ops</Link>
+      <Link href="/" className="nav-logo">kim<b>.</b>tsr</Link>
       <ul className="nav-links">
         {LINKS.map(l => (
           <li key={l.href}>
@@ -54,10 +50,7 @@ export default function NavClient({ profile, labs }: { profile: Profile | null; 
           </li>
         ))}
       </ul>
-      <div style={{ display:'flex', alignItems:'center', gap:14 }}>
-        <SearchPalette labs={labs} />
-        <UserMenu profile={profile} />
-      </div>
+      <a href="/CV_Kim_Tessier.pdf" className="nav-cta" download>CV</a>
     </nav>
   )
 }

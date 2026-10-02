@@ -1,7 +1,7 @@
 'use client'
 import { useEffect, useRef } from 'react'
 
-const SECTIONS = ['hero','gateway','featured','contact'] as const
+const SECTIONS = ['hero','projets','technos','contact'] as const
 
 export default function SideNav() {
   const dotsRef = useRef<HTMLDivElement>(null)

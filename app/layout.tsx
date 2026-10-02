@@ -4,7 +4,7 @@ import './globals.css'
 import Nav from '@/components/Nav'
 import CustomCursor from '@/components/CustomCursor'
 import ScrollProgress from '@/components/ScrollProgress'
-import { SITE_URL, SITE_NAME, SITE_DESCRIPTION, SITE_AUTHOR } from '@/lib/site'
+import { SITE_URL, SITE_NAME, SITE_TITLE, SITE_DESCRIPTION, SITE_AUTHOR } from '@/lib/site'
 
 const spaceGrotesk = Space_Grotesk({ subsets: ['latin'], weight: ['400','500','600','700'], variable: '--font-display' })
 const figtree      = Figtree({ subsets: ['latin'], weight: ['300','400','500','600'], variable: '--font-body' })
@@ -12,22 +12,22 @@ const spaceMono    = Space_Mono({ subsets: ['latin'], weight: ['400','700'], var
 
 export const metadata: Metadata = {
   metadataBase: new URL(SITE_URL),
-  title: { default: `${SITE_NAME} — Blog DevSecOps`, template: `%s — ${SITE_NAME}` },
+  title: { default: SITE_TITLE, template: `%s — ${SITE_NAME}` },
   description: SITE_DESCRIPTION,
   authors: [{ name: SITE_AUTHOR }],
   creator: SITE_AUTHOR,
-  keywords: ['devsecops', 'kubernetes', 'sécurité', 'infrastructure', 'réseau', 'homelab', 'wireguard', 'falco', 'argocd'],
+  keywords: ['devsecops', 'stage', 'cybersécurité', 'kubernetes', 'ci/cd', 'supply chain', 'slsa', 'EPITA', 'Rennes'],
   openGraph: {
     type: 'website',
     locale: 'fr_FR',
     url: SITE_URL,
     siteName: SITE_NAME,
-    title: `${SITE_NAME} — Blog DevSecOps`,
+    title: SITE_TITLE,
     description: SITE_DESCRIPTION,
   },
   twitter: {
     card: 'summary_large_image',
-    title: `${SITE_NAME} — Blog DevSecOps`,
+    title: SITE_TITLE,
     description: SITE_DESCRIPTION,
   },
 }
