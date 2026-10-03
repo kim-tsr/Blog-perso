@@ -10,7 +10,7 @@ export const metadata: Metadata = {
 export default function ContactPage() {
   return (
     <>
-      <main style={{ paddingTop: 60 }}>
+      <main style={{ paddingTop: 40 }}>
         <Contact id="contact-page" />
       </main>
       <Footer />

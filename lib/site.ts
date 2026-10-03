@@ -5,12 +5,12 @@ export const SITE_URL = (
 ).replace(/\/$/, '')
 
 export const SITE_NAME = 'Kim Tessier'
-export const SITE_TITLE = 'Kim Tessier — DevSecOps'
+export const SITE_TITLE = 'Kim Tessier - DevSecOps'
 export const SITE_DESCRIPTION = "Étudiant ingénieur cybersécurité à l'EPITA Rennes, à la recherche d'un stage de fin d'études en DevSecOps ou sécurité des infrastructures à partir de février 2027."
 export const SITE_AUTHOR = 'Kim Tessier'
 
 export const CONTACT = {
-  email: 'kim.tessier@epita.fr',
+  email: 'kim.tessier07@gmail.com',
   linkedin: 'https://www.linkedin.com/in/kim-tessier-330262230',
   linkedinLabel: 'linkedin.com/in/kim-tessier-330262230',
   github: 'https://github.com/kim-tsr',

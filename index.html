@@ -3,7 +3,7 @@
 <head>
 <meta charset="UTF-8">
 <meta name="viewport" content="width=device-width, initial-scale=1.0">
-<title>dev.sec.ops — Blog</title>
+<title>dev.sec.ops - Blog</title>
 <link rel="preconnect" href="https://fonts.googleapis.com">
 <link href="https://fonts.googleapis.com/css2?family=Space+Grotesk:wght@400;500;600;700&family=Figtree:ital,wght@0,300;0,400;0,500;0,600;1,300&family=Space+Mono:wght@400;700&display=swap" rel="stylesheet">
 <style>
@@ -376,7 +376,7 @@ footer{border-top:1px solid var(--border);padding:28px 48px;display:flex;align-i
     <div class="hero-inner">
       <div class="hero-eyebrow">
         <div class="eyebrow-line"></div>
-        <span>Blog DevSecOps — Infrastructure &amp; Sécurité</span>
+        <span>Blog DevSecOps - Infrastructure &amp; Sécurité</span>
       </div>
       <h1 class="hero-title" aria-label="Comprendre. Sécuriser. Partager.">
         <span class="hero-word"><span class="hero-word-inner" style="animation-delay:.35s">Comprendre.</span></span><br>
@@ -447,7 +447,7 @@ footer{border-top:1px solid var(--border);padding:28px 48px;display:flex;align-i
           <svg width="22" height="22" viewBox="0 0 22 22" fill="none" stroke="currentColor" style="color:var(--v)" stroke-width="1.5" stroke-linecap="round"><rect x="2" y="2" width="8" height="8" rx="2"/><rect x="12" y="2" width="8" height="8" rx="2"/><rect x="2" y="12" width="8" height="8" rx="2"/><rect x="12" y="12" width="8" height="8" rx="2"/></svg>
         </div>
         <h3 class="pc-title">Infrastructure</h3>
-        <p class="pc-desc">Kubernetes, Terraform, CI/CD, containers — les fondations d'une infrastructure moderne, résiliente et automatisée.</p>
+        <p class="pc-desc">Kubernetes, Terraform, CI/CD, containers - les fondations d'une infrastructure moderne, résiliente et automatisée.</p>
         <a href="#articles" class="pc-link" aria-label="Explorer Infrastructure">Explorer <svg width="12" height="12" viewBox="0 0 12 12" fill="none" aria-hidden="true"><path d="M2 6h8M7 3l3 3-3 3" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round"/></svg></a>
       </div>
 
@@ -458,7 +458,7 @@ footer{border-top:1px solid var(--border);padding:28px 48px;display:flex;align-i
           <svg width="22" height="22" viewBox="0 0 22 22" fill="none" stroke="currentColor" style="color:var(--c)" stroke-width="1.5" stroke-linecap="round"><path d="M11 2L3 6v5c0 4.418 3.358 8.547 8 9.5C16.642 19.547 20 15.418 20 11V6L11 2z"/></svg>
         </div>
         <h3 class="pc-title">Cybersécurité</h3>
-        <p class="pc-desc">Zero Trust, SIEM, détection d'intrusion, hardening — sécuriser les systèmes sans compromis sur la fluidité.</p>
+        <p class="pc-desc">Zero Trust, SIEM, détection d'intrusion, hardening - sécuriser les systèmes sans compromis sur la fluidité.</p>
         <a href="#articles" class="pc-link" style="color:var(--c)" aria-label="Explorer Cybersécurité">Explorer <svg width="12" height="12" viewBox="0 0 12 12" fill="none" aria-hidden="true"><path d="M2 6h8M7 3l3 3-3 3" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round"/></svg></a>
       </div>
 
@@ -469,7 +469,7 @@ footer{border-top:1px solid var(--border);padding:28px 48px;display:flex;align-i
           <svg width="22" height="22" viewBox="0 0 22 22" fill="none" stroke="currentColor" style="color:var(--a)" stroke-width="1.5" stroke-linecap="round"><circle cx="11" cy="11" r="3"/><path d="M11 2v3M11 17v3M2 11h3M17 11h3M4.93 4.93l2.12 2.12M14.95 14.95l2.12 2.12M4.93 17.07l2.12-2.12M14.95 7.05l2.12-2.12"/></svg>
         </div>
         <h3 class="pc-title">Réseau</h3>
-        <p class="pc-desc">Routage, VPN, SDN, firewall — comprendre et maîtriser les flux réseau dans des architectures distribuées.</p>
+        <p class="pc-desc">Routage, VPN, SDN, firewall - comprendre et maîtriser les flux réseau dans des architectures distribuées.</p>
         <a href="#articles" class="pc-link" style="color:var(--a)" aria-label="Explorer Réseau">Explorer <svg width="12" height="12" viewBox="0 0 12 12" fill="none" aria-hidden="true"><path d="M2 6h8M7 3l3 3-3 3" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round"/></svg></a>
       </div>
     </div>
@@ -514,7 +514,7 @@ footer{border-top:1px solid var(--border);padding:28px 48px;display:flex;align-i
 
 <footer>
   <span class="fl">dev.<b>sec</b>.ops</span>
-  <span class="fc">© 2026 — Fait avec rigueur &amp; curiosité</span>
+  <span class="fc">© 2026 - Fait avec rigueur &amp; curiosité</span>
 </footer>
 
 <!-- CATEGORY OVERLAY -->
@@ -576,11 +576,11 @@ curl -sfL https://get.k3s.io | INSTALL_K3S_EXEC="--disable=traefik" sh -
 kubectl get nodes -o wide</code></div>
 <h2>Réseau et CNI</h2>
 <p>Le choix du <strong>Container Network Interface (CNI)</strong> est crucial. <strong>Cilium</strong> s'est imposé comme le CNI le plus avancé : il repose sur eBPF pour observer et contrôler le trafic réseau à très bas niveau, sans passer par iptables. Ses NetworkPolicies avancées permettent une micro-segmentation fine, essentielle pour une approche Zero Trust.</p>
-<div class="ao-callout"><p>Cilium dispose d'une interface Hubble qui offre une visibilité L7 complète sur chaque flux réseau entre pods — un atout majeur pour le troubleshooting et la sécurité.</p></div>
+<div class="ao-callout"><p>Cilium dispose d'une interface Hubble qui offre une visibilité L7 complète sur chaque flux réseau entre pods - un atout majeur pour le troubleshooting et la sécurité.</p></div>
 <h2>Stockage persistant</h2>
 <p>Pour les workloads stateful, <strong>Longhorn</strong> ou <strong>Rook/Ceph</strong> offrent un stockage distribué natif Kubernetes. Pour les environnements cloud, les CSI drivers des providers (AWS EBS, GCP Persistent Disk) restent la solution la plus simple. La clé : définir des <strong>StorageClasses</strong> avec des politiques de rétention explicites dès le départ.</p>
 <h2>Monitoring et observabilité</h2>
-<p>Le stack <strong>kube-prometheus + Grafana</strong> est incontournable. Déployez-le via l'opérateur officiel <code>kube-prometheus-stack</code> avec Helm. Associez-y <strong>Loki</strong> pour les logs et <strong>Tempo</strong> pour le tracing distribué — vous obtenez la trilogie observabilité complète.</p>
+<p>Le stack <strong>kube-prometheus + Grafana</strong> est incontournable. Déployez-le via l'opérateur officiel <code>kube-prometheus-stack</code> avec Helm. Associez-y <strong>Loki</strong> pour les logs et <strong>Tempo</strong> pour le tracing distribué - vous obtenez la trilogie observabilité complète.</p>
 <div class="ao-code"><code># Installer kube-prometheus-stack
 helm repo add prometheus-community \\
   https://prometheus-community.github.io/helm-charts
@@ -596,7 +596,7 @@ helm install kube-prom \\
     content:`
 <p>Le modèle <strong>Zero Trust</strong> repose sur un principe simple mais radical : ne jamais faire confiance, toujours vérifier. Ni le réseau, ni l'identité, ni la position géographique ne constituent une preuve de légitimité. Dans cet article, on pose les bases d'une implémentation concrète.</p>
 <h2>Les cinq piliers du Zero Trust</h2>
-<p>Le NIST SP 800-207 identifie cinq piliers : <strong>Identité</strong>, <strong>Appareil</strong>, <strong>Réseau</strong>, <strong>Charge de travail</strong>, et <strong>Données</strong>. Une stratégie Zero Trust mature doit adresser chacun de ces plans. La plupart des organisations commencent par l'identité — c'est le vecteur d'attaque numéro un.</p>
+<p>Le NIST SP 800-207 identifie cinq piliers : <strong>Identité</strong>, <strong>Appareil</strong>, <strong>Réseau</strong>, <strong>Charge de travail</strong>, et <strong>Données</strong>. Une stratégie Zero Trust mature doit adresser chacun de ces plans. La plupart des organisations commencent par l'identité - c'est le vecteur d'attaque numéro un.</p>
 <div class="ao-callout"><p>80% des violations de données impliquent des identifiants compromis ou volés. Renforcer l'identité via le MFA et les politiques d'accès adaptatif est votre premier investissement Zero Trust.</p></div>
 <h2>Identity Provider et SSO</h2>
 <p><strong>Keycloak</strong> est l'IdP open source de référence. Il supporte OIDC, SAML, et peut fédérer des annuaires LDAP/Active Directory existants. Couplé à <strong>Authentik</strong> comme proxy d'authentification, vous couvrez l'authentification de l'ensemble de vos applications internes sans exposer chacune d'elles directement.</p>
@@ -642,7 +642,7 @@ ovs-vsctl show</code></div>
 <p><strong>OpenDaylight</strong> et <strong>ONOS</strong> sont les deux contrôleurs open source les plus matures. ONOS brille particulièrement dans les environnements carrier-grade avec ses garanties de haute disponibilité. OpenDaylight offre un écosystème de plugins très riche pour les cas d'usage enterprise.</p>
 <div class="ao-callout"><p>Dans un contexte DevSecOps, le SDN permet de programmer dynamiquement des règles de quarantaine : dès qu'une alerte SIEM se déclenche, le contrôleur peut isoler automatiquement le segment réseau suspect.</p></div>
 <h2>P4 : le futur du dataplane programmable</h2>
-<p>Au-delà d'OpenFlow, le langage <strong>P4</strong> permet de programmer le comportement du dataplane lui-même — pas seulement les règles de forwarding, mais le traitement des paquets à un niveau très bas. Les smartNICs et certains ASICs modernes supportent P4, ouvrant des possibilités inédites pour l'inspection et la transformation de trafic en temps réel.</p>
+<p>Au-delà d'OpenFlow, le langage <strong>P4</strong> permet de programmer le comportement du dataplane lui-même - pas seulement les règles de forwarding, mais le traitement des paquets à un niveau très bas. Les smartNICs et certains ASICs modernes supportent P4, ouvrant des possibilités inédites pour l'inspection et la transformation de trafic en temps réel.</p>
 `
   },
   {
@@ -652,8 +652,8 @@ ovs-vsctl show</code></div>
     content:`
 <p><strong>Terraform</strong> provisionne l'infrastructure (VMs, réseaux, DNS). <strong>Ansible</strong> la configure (packages, services, utilisateurs). Ces deux outils sont complémentaires et forment ensemble le socle d'une démarche Infrastructure as Code robuste, de votre homelab jusqu'au cloud public.</p>
 <h2>Terraform : l'infrastructure déclarative</h2>
-<p>Terraform utilise HCL (HashiCorp Configuration Language) pour décrire l'état désiré de votre infrastructure. Son moteur de planification calcule le diff entre l'état courant et l'état désiré, puis applique uniquement les changements nécessaires. Le <strong>state file</strong> — à stocker en remote (S3, Terraform Cloud) — garde trace de l'état réel.</p>
-<div class="ao-code"><code># main.tf — Exemple Proxmox + Terraform
+<p>Terraform utilise HCL (HashiCorp Configuration Language) pour décrire l'état désiré de votre infrastructure. Son moteur de planification calcule le diff entre l'état courant et l'état désiré, puis applique uniquement les changements nécessaires. Le <strong>state file</strong> - à stocker en remote (S3, Terraform Cloud) - garde trace de l'état réel.</p>
+<div class="ao-code"><code># main.tf - Exemple Proxmox + Terraform
 terraform {
   required_providers {
     proxmox = {
@@ -672,7 +672,7 @@ resource "proxmox_virtual_environment_vm" "k8s_node" {
 }</code></div>
 <h2>Ansible : la configuration idempotente</h2>
 <p>Un playbook Ansible bien écrit est <strong>idempotent</strong> : on peut le rejouer plusieurs fois sans effets de bord. Utilisez des <strong>roles</strong> pour organiser votre code et <strong>molecule</strong> pour tester vos rôles dans des containers avant de les déployer. L'inventaire dynamique permet de cibler automatiquement les VMs créées par Terraform.</p>
-<div class="ao-callout"><p>Combinez Terraform et Ansible via un null_resource avec un remote-exec provisioner — ou mieux, via un pipeline CI/CD GitLab qui exécute d'abord terraform apply puis ansible-playbook sur le nouvel inventaire.</p></div>
+<div class="ao-callout"><p>Combinez Terraform et Ansible via un null_resource avec un remote-exec provisioner - ou mieux, via un pipeline CI/CD GitLab qui exécute d'abord terraform apply puis ansible-playbook sur le nouvel inventaire.</p></div>
 `
   },
   {
@@ -683,7 +683,7 @@ resource "proxmox_virtual_environment_vm" "k8s_node" {
 <p>Un <strong>SIEM</strong> (Security Information and Event Management) centralise, corrèle et alerte sur les événements de sécurité de votre infrastructure. <strong>Wazuh</strong> + <strong>Elasticsearch / OpenSearch</strong> forment l'un des stacks SIEM open source les plus complets et actifs du marché.</p>
 <h2>Architecture du stack</h2>
 <p>Wazuh se compose d'un <strong>Manager</strong> qui reçoit les événements, d'<strong>agents</strong> déployés sur chaque endpoint, et d'une <strong>API REST</strong>. OpenSearch (fork open source d'Elasticsearch) stocke et indexe les données. OpenSearch Dashboards (fork de Kibana) offre la visualisation.</p>
-<div class="ao-code"><code># docker-compose.yml — Wazuh All-in-One
+<div class="ao-code"><code># docker-compose.yml - Wazuh All-in-One
 services:
   wazuh.manager:
     image: wazuh/wazuh-manager:4.7.3
@@ -700,7 +700,7 @@ services:
       - discovery.type=single-node</code></div>
 <h2>Règles de détection personnalisées</h2>
 <p>Wazuh intègre des milliers de règles prêtes à l'emploi (rootkits, CVE connues, brute force SSH). Vous pouvez les compléter avec des <strong>règles XML custom</strong> adaptées à votre environnement. Créez des règles pour détecter des comportements anormaux spécifiques à votre stack (tentatives d'accès à l'API Kubernetes, modifications de sudoers…).</p>
-<div class="ao-callout"><p>Activez les <strong>File Integrity Monitoring (FIM)</strong> sur les répertoires critiques (/etc, /bin, /usr/bin). Toute modification non planifiée déclenchera une alerte immédiate — excellent pour détecter un mouvement latéral post-exploitation.</p></div>
+<div class="ao-callout"><p>Activez les <strong>File Integrity Monitoring (FIM)</strong> sur les répertoires critiques (/etc, /bin, /usr/bin). Toute modification non planifiée déclenchera une alerte immédiate - excellent pour détecter un mouvement latéral post-exploitation.</p></div>
 `
   },
   {
@@ -711,7 +711,7 @@ services:
 <p>Le VPN reste un composant fondamental de l'accès sécurisé à un lab ou une infrastructure distante. <strong>WireGuard</strong>, intégré au kernel Linux depuis la version 5.6, s'est imposé comme une alternative moderne et performante à <strong>OpenVPN</strong>. Mais lequel choisir selon votre usage ?</p>
 <h2>WireGuard : la modernité et la performance</h2>
 <p>WireGuard représente ~4000 lignes de code C (vs ~70 000 pour OpenVPN), ce qui facilite drastiquement son audit de sécurité. Il repose sur une cryptographie moderne et figée : <strong>ChaCha20</strong> pour le chiffrement, <strong>Curve25519</strong> pour l'échange de clés, <strong>Poly1305</strong> pour l'authenticité. Pas de négociation d'algorithme, pas de surface d'attaque liée à une mauvaise configuration crypto.</p>
-<div class="ao-code"><code># /etc/wireguard/wg0.conf — Serveur
+<div class="ao-code"><code># /etc/wireguard/wg0.conf - Serveur
 [Interface]
 PrivateKey = &lt;SERVER_PRIVATE_KEY&gt;
 Address    = 10.0.0.1/24
@@ -725,7 +725,7 @@ AllowedIPs = 10.0.0.2/32
 wg-quick up wg0</code></div>
 <h2>OpenVPN : la flexibilité et l'écosystème</h2>
 <p>OpenVPN reste pertinent pour les environnements qui nécessitent une <strong>compatibilité large</strong> (clients anciens, équipements réseau tiers), une <strong>traversée fine de firewalls</strong> (TCP/443 est rarement bloqué), ou des fonctionnalités avancées comme les CRL et la révocation de certificats granulaire.</p>
-<div class="ao-callout"><p>Pour un lab DevSecOps personnel, choisissez WireGuard sans hésitation. Pour une PKI d'entreprise avec gestion de certificats et révocation, OpenVPN reste plus adapté — ou explorez Tailscale qui abstrait WireGuard avec une couche de gestion des identités.</p></div>
+<div class="ao-callout"><p>Pour un lab DevSecOps personnel, choisissez WireGuard sans hésitation. Pour une PKI d'entreprise avec gestion de certificats et révocation, OpenVPN reste plus adapté - ou explorez Tailscale qui abstrait WireGuard avec une couche de gestion des identités.</p></div>
 <h2>Tailscale : WireGuard managé</h2>
 <p><strong>Tailscale</strong> construit un mesh VPN WireGuard avec une gestion d'identités intégrée (SSO via votre IdP). Son <strong>MagicDNS</strong> résout automatiquement les noms de vos machines. Pour un lab multi-sites ou une équipe distribuée, c'est de loin la solution la plus rapide à déployer et la plus simple à maintenir.</p>
 `
@@ -932,9 +932,9 @@ dots.forEach(d => d.addEventListener('click', () => {
 
 /* ─── CATEGORIES ─── */
 const CAT_META = {
-  infra:  { label:'Infrastructure', col:'var(--v)', glow:'oklch(0.50 0.28 280/.22)', desc:'Kubernetes, Terraform, CI/CD, containers — les fondations d\'une infrastructure moderne.' },
-  sec:    { label:'Cybersécurité',   col:'var(--c)', glow:'oklch(0.50 0.18 194/.18)', desc:'Zero Trust, SIEM, détection d\'intrusion, hardening — sécuriser sans compromis.' },
-  reseau: { label:'Réseau',          col:'var(--a)', glow:'oklch(0.54 0.18 65/.18)',  desc:'SDN, VPN, routage, firewall — maîtriser les flux dans des architectures distribuées.' },
+  infra:  { label:'Infrastructure', col:'var(--v)', glow:'oklch(0.50 0.28 280/.22)', desc:'Kubernetes, Terraform, CI/CD, containers - les fondations d\'une infrastructure moderne.' },
+  sec:    { label:'Cybersécurité',   col:'var(--c)', glow:'oklch(0.50 0.18 194/.18)', desc:'Zero Trust, SIEM, détection d\'intrusion, hardening - sécuriser sans compromis.' },
+  reseau: { label:'Réseau',          col:'var(--a)', glow:'oklch(0.54 0.18 65/.18)',  desc:'SDN, VPN, routage, firewall - maîtriser les flux dans des architectures distribuées.' },
 };
 const CAT_TAG_MAP = { infra:'Infrastructure', sec:'Cybersécurité', reseau:'Réseau' };
 const CAT_TC      = { infra:'tv', sec:'tc', reseau:'ta' };
@@ -1006,7 +1006,7 @@ function handleSub(e) {
 }
 
 /* ═══════════════════════════════════════
-   FX ENGINE — cursor + 3D wireframes + aura
+   FX ENGINE - cursor + 3D wireframes + aura
 ═══════════════════════════════════════ */
 (function() {
 

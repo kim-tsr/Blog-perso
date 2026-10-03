@@ -6,12 +6,12 @@ import { CONTACT } from '@/lib/site'
 
 export const metadata: Metadata = {
   title: 'À propos',
-  description: "Kim Tessier, dernière année du cycle ingénieur cybersécurité à l'EPITA Rennes (diplôme 2027).",
+  description: "Kim Tessier, dernière année du cycle ingénieur majeure SecDevOps à l'EPITA Rennes (diplôme 2027).",
 }
 
 const PARAGRAPHS = [
-  "Je m'appelle Kim Tessier. Je suis en dernière année du cycle ingénieur cybersécurité à l'EPITA Rennes, diplôme en 2027. Je me spécialise dans la sécurité des infrastructures et de la chaîne logicielle : pipelines CI/CD sécurisés, Kubernetes, Infrastructure as Code et durcissement réseau.",
-  "J'aime comprendre les systèmes jusqu'au bas niveau, et j'aime transmettre. Depuis juillet 2026, je fais partie de l'équipe pédagogique C/Unix de l'EPITA : je suis responsable du projet httpd, je relis les sujets, et j'encadre les Piscines C/Unix et SQL. Avant cela, j'ai été assistant sur les cours de Java, C++ et JavaScript en cycle ingénieur, et de C# en cycle préparatoire.",
+  "Je m'appelle Kim Tessier. Je suis en dernière année du cycle ingénieur majeure SecDevOps à l'EPITA Rennes, diplôme en 2027. Je me spécialise dans la sécurité des infrastructures et de la chaîne logicielle : pipelines CI/CD sécurisés, Kubernetes, Infrastructure as Code et durcissement réseau.",
+  "J'aime comprendre les systèmes jusqu'au bas niveau, et j'aime transmettre. Depuis juillet 2026, je fais partie des ACU (Assistants C/Unix), l'équipe pédagogique C/Unix de l'EPITA: je relis les sujets, j'encadre les Piscines C/Unix et SQL, et je maintiens un projet en C avec toute sa chaîne CI/CD (testsuite automatisée, build et déploiement via Nix). Auparavant, j'ai été assistant YAKA (Yet Another Kind of Assistant) sur les cours de Java, C++ et JavaScript en cycle ingénieur, puis ACDC (Assistant C Dièse Caml) sur le C# et le OCaml en cycle préparatoire.",
   "À la Junior-Entreprise JECT, j'ai créé l'antenne de Rennes, puis conçu une offre de 6 prestations de cybersécurité. J'ai aussi travaillé comme assistant chercheur sur la détection d'intrusion réseau en temps réel, et passé un semestre en Computer Science à California State University, Los Angeles.",
   "En dehors de l'informatique, je m'intéresse à la géopolitique, à l'informatique quantique et à l'électronique.",
 ]
@@ -25,7 +25,7 @@ export default function AProposPage() {
           <div className="container" style={{ maxWidth: 760 }}>
             {PARAGRAPHS.map((p, i) => (
               <ScrollReveal key={i} delay={0.05 * i}>
-                <p style={{ fontSize: 17, color: 'var(--mid)', lineHeight: 1.85, fontWeight: 300, marginBottom: 26 }}>{p}</p>
+                <p style={{ fontSize: 18, color: 'var(--ink)', lineHeight: 1.8, marginBottom: 26 }}>{p}</p>
               </ScrollReveal>
             ))}
             <ScrollReveal delay={0.2}>
