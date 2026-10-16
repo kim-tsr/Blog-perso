@@ -5,6 +5,15 @@ export interface Step {
   snippets?: Snippet[]
 }
 
+export interface Story {
+  title: string
+  intro: string
+  tech: string[]
+  repos: { label: string; href: string }[]
+  steps: Step[]
+  retex: { learned: string[]; next: string[] }
+}
+
 export const KORT = {
   title: 'kort : déploiement GitOps sur Kubernetes',
   intro: "kort est un raccourcisseur d'URL avec comptage de clics asynchrone (API FastAPI, worker, Redis, PostgreSQL). Je l'ai pris comme terrain de jeu pour apprendre à conteneuriser, déployer, exposer, observer puis durcir une application sur Kubernetes. Le code et les manifestes vivent dans deux dépôts séparés, et le tout est déployé sur mon cluster k3s par ArgoCD. Voici comment j'ai procédé, et ce que j'en retire.",

@@ -94,10 +94,23 @@ export const TIMELINE: TimelinePhase[] = [
         links: [{ label: 'Lire le retour d’expérience', href: '/projets/kort' }],
       },
       {
+        title: 'PenetrateAndDestroy : une plateforme CTF jetable',
+        text: "Une plateforme CTF complète que je détruis et reconstruis avec une seule commande, sur un hôte Proxmox : réseau en sept zones derrière OPNsense, cluster Talos géré par Cluster API et ArgoCD, SSO, VPN, instances de challenges isolées par équipe, front sur mesure et supervision. Tout en infrastructure as code, avec les secrets chiffrés dans un dépôt public.",
+        tags: ['Proxmox', 'OpenTofu', 'Talos', 'ArgoCD', 'Cilium', 'SOPS'],
+        links: [
+          { label: 'Lire le retour d\u2019expérience', href: '/projets/penetrate-and-destroy' },
+          { label: 'Dépôt GitHub', href: 'https://github.com/kim-tsr/penetrate-and-destroy', external: true },
+        ],
+      },
+      {
         title: 'Classifieur de prompts malveillants',
-        text: "Projet d'école en cours : un modèle qui détecte les prompts dangereux avant qu'ils n'atteignent un LLM. Il cible l'injection de prompt, le jailbreak et le contenu nocif, avec un support du français.",
-        tags: ['Python', 'Machine learning', 'Sécurité des LLM'],
-        links: [{ label: 'Fiche projet', href: '/projets#classifieur-prompts' }],
+        text: "Un modèle qui détecte les prompts dangereux (injection, jailbreak, détournement, exfiltration) avant qu'ils n'atteignent un LLM : mmBERT-base fine-tuné sur 1,1 million de prompts, 0,96 de macro-F1, publié sur Hugging Face. Mon retour d'expérience raconte la v1, un faux résultat à 0,2 de F1 et le bug derrière, puis le passage à l'échelle.",
+        tags: ['Python', 'Transformers', 'Hugging Face', 'Sécurité des LLM'],
+        links: [
+          { label: 'Lire le retour d\u2019expérience', href: '/projets/classifieur-prompts' },
+          { label: 'Modèle sur Hugging Face', href: 'https://huggingface.co/Kim-tsr/redflag-mmbert-base-s1', external: true },
+          { label: 'Notebook Kaggle', href: 'https://www.kaggle.com/code/majeee/notebooke9e1aadf49', external: true },
+        ],
       },
       {
         title: 'ACU : review, responsable et encadrant des Piscines',

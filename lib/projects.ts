@@ -24,6 +24,13 @@ export const PROJECTS: Project[] = [
     featured: true,
   },
   {
+    id: 'penetrate-and-destroy',
+    title: 'PenetrateAndDestroy : plateforme CTF jetable',
+    slug: 'penetrate-and-destroy',
+    description: "Une plateforme CTF complète qui se détruit et se reconstruit avec une seule commande, sur un hôte Proxmox : routeur OPNsense en sept zones, cluster Talos géré par Cluster API et ArgoCD, SSO Authentik, VPN NetBird, instances de challenges isolées par équipe, front Next.js sur mesure et supervision complète. 100 % infrastructure as code, secrets chiffrés dans un dépôt public.",
+    tech: ['Proxmox', 'OpenTofu', 'Ansible', 'OPNsense', 'Talos', 'Cluster API', 'ArgoCD', 'Cilium', 'Kyverno', 'SOPS', 'NetBird', 'Authentik', 'CTFd', 'Next.js'],
+  },
+  {
     id: 'infra-multi-sites',
     title: "Infrastructure d'entreprise multi-sites",
     description: "Conception d'une infrastructure complète : un datacenter avec 3 contrôleurs de domaine, un cluster Kubernetes et un bastion, un siège avec sa flotte de postes, et 3 agences. Les sites sont reliés en VPN hub-and-spoke, et les accès distants sont authentifiés par LDAP.",
@@ -38,8 +45,9 @@ export const PROJECTS: Project[] = [
   {
     id: 'classifieur-prompts',
     title: 'Classifieur de prompts malveillants',
-    description: "Projet d'école en cours : un modèle qui détecte les prompts dangereux avant qu'ils n'atteignent un LLM. Il cible l'injection de prompt, le jailbreak et le contenu nocif, avec un support du français.",
-    tech: ['Python', 'Machine learning', 'Sécurité des LLM'],
+    slug: 'classifieur-prompts',
+    description: "Un modèle (mmBERT-base fine-tuné) qui classe chaque prompt en cinq catégories (sain, injection, jailbreak, détournement, exfiltration) avant qu'il n'atteigne un LLM : entraîné sur 1,1 million de prompts, 0,96 de macro-F1, publié sur Hugging Face et branché dans une démo FastAPI.",
+    tech: ['Python', 'PyTorch', 'Transformers', 'Hugging Face', 'Sécurité des LLM'],
   },
   {
     id: 'recherche-offensive',

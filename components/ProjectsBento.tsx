@@ -3,13 +3,13 @@ import Link from 'next/link'
 import type { Project } from '@/lib/projects'
 
 const AREA: Record<string, string> = {
-  kort: 'a-kort', 'pipeline-slsa': 'a-slsa', 'infra-multi-sites': 'a-infra', audits: 'a-audit',
+  kort: 'a-kort', 'pipeline-slsa': 'a-slsa', 'penetrate-and-destroy': 'a-pad', 'infra-multi-sites': 'a-infra', audits: 'a-audit',
   'classifieur-prompts': 'a-clf', 'recherche-offensive': 'a-off', 'detection-intrusion': 'a-ids',
   'clone-twitter': 'a-tw', pcbwalker: 'a-pcb',
 }
 
 function Cell({ p, i }: { p: Project; i: number }) {
-  const big = p.id === 'kort' || p.id === 'pipeline-slsa'
+  const big = p.id === 'kort' || p.id === 'pipeline-slsa' || p.id === 'penetrate-and-destroy'
   const shown = big ? p.tech : p.tech.slice(0, 4)
   const body = (
     <>
@@ -45,6 +45,7 @@ export default function ProjectsBento({ projects }: { projects: Project[] }) {
         .bento { display:grid; grid-template-columns:repeat(4,1fr); grid-auto-rows:minmax(250px,auto); gap:16px; }
         .a-kort { grid-column:1 / span 2; grid-row:1; }
         .a-slsa { grid-column:3 / span 2; grid-row:1; }
+        .a-pad { grid-column:1 / -1; }
         .a-infra { grid-column:1; } .a-audit { grid-column:2; }
         .a-clf { grid-column:3 / span 2; } .a-off, .a-ids, .a-tw, .a-pcb { grid-column:auto; }
         .bn { position:relative; display:flex; flex-direction:column; padding:24px; border:1px solid var(--border); border-radius:20px; overflow:hidden; scroll-margin-top:100px;
