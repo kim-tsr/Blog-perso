@@ -1,12 +1,18 @@
 import type { Story } from './kort'
 
 export const PAD_REPO = 'https://github.com/kim-tsr/penetrate-and-destroy'
+// Documentation MkDocs archivée en statique dans public/pad-docs (le lab n'est plus en ligne).
+export const PAD_DOCS_PAGE = '/projets/penetrate-and-destroy/documentation'
+export const PAD_DOCS_HOME = '/pad-docs/index.html'
 
 export const PAD: Story = {
   title: 'PenetrateAndDestroy : une plateforme CTF jetable, de bout en bout',
-  intro: "PenetrateAndDestroy est une plateforme CTF complète que je peux détruire et reconstruire avec une seule commande, sur un unique hôte Proxmox. Un routeur OPNsense découpe le réseau en sept zones, les services d'infrastructure tournent en LXC, un cluster Kubernetes Talos héberge CTFd (en mode headless), un front Next.js sur mesure et les instances de challenges, une par équipe. Tout est en infrastructure as code, tout est déployé par ArgoCD, et le dépôt est public : aucun secret en clair. Voici comment je l'ai conçue, ce qui m'a coûté du temps, et ce que je referais.",
+  intro: "PenetrateAndDestroy est une plateforme CTF complète que je peux détruire et reconstruire avec une seule commande, sur un unique hôte Proxmox. Un routeur OPNsense découpe le réseau en sept zones, les services d'infrastructure tournent en LXC, un cluster Kubernetes Talos héberge CTFd (en mode headless), un front Next.js sur mesure et les instances de challenges, une par équipe. Tout est en infrastructure as code, tout est déployé par ArgoCD, et le dépôt est public : aucun secret en clair. Je l'ai conçue, validée hors ligne, puis déployée pour de vrai sur mon serveur, avant d'arrêter le lab. Voici comment je l'ai construite, ce que le premier déploiement m'a appris, et ce que je referais.",
   tech: ['Proxmox', 'OpenTofu', 'Ansible', 'OPNsense', 'Talos', 'Cluster API', 'ArgoCD', 'Cilium', 'Kyverno', 'SOPS + age', 'NetBird', 'Authentik', 'CTFd', 'Next.js', 'Prometheus'],
-  repos: [{ label: 'Dépôt GitHub', href: PAD_REPO }],
+  repos: [
+    { label: 'Dépôt GitHub', href: PAD_REPO },
+    { label: 'Documentation (archive)', href: PAD_DOCS_PAGE },
+  ],
   steps: [
     {
       title: 'Le cahier des charges : jetable, reconstructible, public',
@@ -185,28 +191,131 @@ HEALTHCHECK ...` }],
       ],
     },
     {
-      title: "Où j'en suis",
+      title: 'Le premier déploiement réel : quatre jours face au matériel',
       text: [
-        "Tout ce qui peut être validé hors ligne l'est, et les trois workflows de CI sont verts. Le premier déploiement sur le matériel est la prochaine étape. Plusieurs points ne sont validés que sur le papier et à confirmer sur le serveur : l'adoption des objets Cluster API par ArgoCD, les user namespaces sous Talos, les règles DNS L7 de Cilium et les noms de domaine de chall-manager, le rôle network_admin de NetBird, l'import de la configuration OPNsense, les overrides Unbound et, surtout, l'enchaînement complet de task up.",
-        "Je ne vais donc pas prétendre que ça marche du premier coup : un système qui se reconstruit en une commande se mérite, et c'est le chronométrage de task rebuild sur le vrai hôte qui dira si la promesse est tenue.",
+        "La plateforme était validée hors ligne. Je l'ai ensuite déployée de bout en bout sur l'hôte réel, phase par phase, avec une règle stricte : chaque correctif est fait dans le dépôt public, commité, documenté dans le guide, puis récupéré dans mon dépôt privé, celui qui porte les valeurs de mon site. Jamais de rustine directement sur le serveur. En quatre jours : 225 commits, dont 116 correctifs, et un tableau de dépannage passé à 40 entrées, chacune avec le symptôme exact et sa cause.",
+        "J'ai piloté ce déploiement avec un agent Claude Code. Il exécutait les phases, lisait les journaux, cherchait la cause et proposait le correctif. Les garde-fous ont joué leur rôle : l'agent n'a jamais pu affaiblir seul un réglage de sécurité de l'hôte (la liste d'IP autorisées de l'API Proxmox, par exemple). Il me donnait la commande exacte, je la lançais en connaissance de cause, et un contrôle était ajouté à la phase 0 pour que ce prérequis soit vérifié aux déploiements suivants.",
+        "Le plus instructif, c'est que presque aucun de ces problèmes n'était visible hors ligne. Ils naissent de la rencontre entre des choix individuellement corrects : le durcissement de l'hôte, une politique « deny by default » partout, un budget de RAM serré, des versions récentes d'outils qui changent leurs valeurs par défaut.",
+      ],
+      snippets: [{ file: 'git log (déploiement)', lang: 'text', code: `225 commits en 4 jours, dont 116 correctifs
+  edge, ansible, composants     10 chacun
+  opnsense                       9
+  gitops, cluster                7
+  ctfd                           6
+  kyverno, argocd, netbird...    5
+
+guide de déploiement : 40 entrées de dépannage
+  symptôme exact (message d'erreur) -> cause -> correctif` }],
+    },
+    {
+      title: 'Le durcissement de l’hôte contre la plateforme',
+      text: [
+        "Les premiers blocages venaient de mon propre hôte, durci avant le projet. L'API Proxmox n'acceptait que le VPN : le cloud controller du cluster recevait un « connection reset » et les nœuds restaient non initialisés. OpenSSH 10 pénalise les connexions répétées d'une même source (PerSourcePenalties) : Ansible, qui rebondit par l'hôte vers six LXC, se faisait refuser. Il a fallu multiplexer le rebond SSH. Et le pont des zones, filtré par br_netfilter, croisait le SNAT du VPN Tailscale : les réponses perdaient leur traduction. Une règle notrack sur les trames pontées l'a réglé.",
+        "La leçon : le durcissement d'un hôte fait partie des prérequis d'une plateforme, au même titre que ses ports. Chacun de ces points est devenu un contrôle de la phase 0, qui échoue avant de toucher quoi que ce soit.",
+      ],
+    },
+    {
+      title: '« Deny by default » : il faut ouvrir les deux côtés',
+      text: [
+        "Chaque namespace de la plateforme démarre en default-deny Cilium. Sur le papier, c'est la bonne posture. En vrai, elle a produit une série de pannes silencieuses, toutes du même type : un flux autorisé d'un seul côté. Le repo-server d'ArgoCD s'est coupé lui-même de Git en appliquant la politique de son propre namespace, et ne pouvait plus se réparer. cert-manager ne joignait pas Let's Encrypt. L'API server ne joignait pas les webhooks de mariadb-operator, cert-manager et KEDA, si bien que la base de CTFd n'était jamais créée. Le front sortait vers Valkey, mais le namespace de Valkey ne le laissait pas entrer.",
+        "Le piège le plus subtil vient de Cilium. Une NetworkPolicy Kubernetes en ipBlock ne couvre pas les IP des nœuds : Cilium les classe en entités (kube-apiserver, host, remote-node). La règle « autoriser le CIDR de la zone sur 6443 » ne laissait donc jamais passer l'API server, et netbird-sync tournait en boucle sans pouvoir synchroniser ses caches. La réponse est une CiliumNetworkPolicy en toEntities. J'ai aussi fait passer Git par SSH sur le port 443, plutôt que d'ouvrir le 22 en sortie : les zones n'ont d'egress Internet qu'en 80 et 443.",
+      ],
+      snippets: [{ file: 'apiserver-egress.yaml', lang: 'yaml', code: `# Cilium ne compare pas les IP des nœuds aux ipBlock :
+# l'API server se déclare comme une entité.
+apiVersion: cilium.io/v2
+kind: CiliumNetworkPolicy
+metadata:
+  name: apiserver-egress
+spec:
+  endpointSelector: {}
+  egress:
+    - toEntities: [kube-apiserver]` }],
+    },
+    {
+      title: 'Le budget de RAM, et le jour où l’hôte s’est figé',
+      text: [
+        "Le budget de 31 Go s'est révélé faux sur un point : le control plane. Avec 122 CRD installées par la plateforme (Cluster API, Kyverno, Cilium, cert-manager, MariaDB, KEDA...), kube-apiserver montait à 1,9 Go. À 2,5 Go, le nœud saturait et l'API tombait en plein déploiement. Il est passé à 4 Go, et les workers de 3,5 à 4,5 Go : les requests de la plateforme ne tenaient pas.",
+        "Puis l'hôte s'est figé. Un rolling update des workers créait une VM de plus avant de supprimer l'ancienne, pendant que le cache ZFS gardait 4 Go : le noyau est entré en récupération mémoire et s'est bloqué (rcu_preempt detected stalls). Plus de SSH, plus de VPN, plus de site. Il a fallu un redémarrage matériel par la console IPMI de l'hébergeur. Les correctifs : cache ZFS à 2 Go, remplacement des nœuds sans surge (maxSurge: 0), et surtout un contrôle de phase 0 qui calcule le pic (pool challenges au maximum, cache et réserve compris) et échoue s'il dépasse la RAM.",
+        "Retirer la surge a créé deux interblocages, à résoudre l'un après l'autre. Avec deux workers seulement, un PodDisruptionBudget empêchait de vider un nœud, faute de place pour le second réplica : j'ai ajouté un délai de drain. Et le contrôleur CAPMOX, celui qui crée les VM, restait lui-même en attente de place sur le seul worker restant : les contrôleurs Cluster API sont désormais en priorité system-cluster-critical.",
+      ],
+      snippets: [{ file: 'check 0-prereqs (principe)', lang: 'bash', code: `# pic = invités (pool challenges au maximum) + ARC ZFS + réserve
+need=$(yq '.router.memory_mb, .services[].memory_mb,
+  .kubernetes.control_plane.memory_mb,
+  .kubernetes.pools.platform.memory_mb * .kubernetes.pools.platform.replicas,
+  .kubernetes.pools.challenges.memory_mb * .kubernetes.pools.challenges.max' \\
+  contracts.yaml | awk '{s+=$1} END {print s}')
+peak=$((need + arc_mb + 2048))
+(( host_mb < peak )) && fail "pic \${peak} Mio > RAM de l'hôte"` }],
+    },
+    {
+      title: 'Une régression Talos, lue dans le code source',
+      text: [
+        "Après le redémarrage de l'hôte, le control plane est revenu sans adresse IP. CAPMOX injecte l'IP statique de chaque nœud par un ISO cloud-init, qu'il éjecte une fois la machine prête. Normalement, Talos garde alors en cache la dernière configuration réseau. Mais Talos 1.11.3 contient une régression : sans l'ISO, il écrase ce cache par une configuration vide. Je l'ai confirmé en lisant le code des deux projets, puis l'issue correspondante, corrigée en 1.11.4.",
+        "La reprise a été la meilleure démonstration du projet. Plutôt que de réparer le nœud à la main, j'ai monté Talos en 1.11.6 dans le contrat, détruit le cluster cassé avec une tâche dédiée, et relancé les phases 3, 9 et 10 : nouveau template, nouveau cluster, pivot, ArgoCD. Les LXC, le routeur et l'identité n'ont pas bougé.",
+      ],
+    },
+    {
+      title: 'Le SSO, ou les valeurs par défaut qui changent',
+      text: [
+        "La chaîne d'identité a cassé à plusieurs endroits, souvent à cause d'une version récente. Authentik 2026 ajoute une liste des flux autorisés par fournisseur OAuth : laissée vide par tofu, elle refusait toute connexion, sur tous les services. Son mapping e-mail renvoie toujours email_verified à false, et Warpgate refuse alors de rattacher le compte. Je l'ai remplacé par un mapping qui ne marque l'adresse vérifiée que lorsque c'est vrai : comptes à privilèges, attribués par un administrateur. Les joueurs inscrits seuls restent à false.",
+        "D'autres pièges tenaient au protocole. NetBird attend un hash bcrypt du mot de passe de son propriétaire, pas le mot de passe en clair. Warpgate lie son cookie de session à son nom d'hôte : ouvert par son IP, il connecte, puis renvoie au formulaire sans aucune erreur. Et le WAF CrowdSec lisait le gRPC binaire de NetBird comme une attaque : chaque appel de netbird up recevait un 403, et ces 403 en rafale ont fait bannir ma propre IP pour quatre heures. Les flux gRPC et WebSocket passent désormais par une chaîne sans WAF, qui applique toujours les bans d'IP.",
+      ],
+      snippets: [{ file: 'stacks/30-authentik/oidc.tf', lang: 'hcl', code: `resource "authentik_provider_oauth2" "client" {
+  # ...
+  # Authentik 2026 : vide = aucun flux permis
+  grant_types = ["authorization_code", "refresh_token"]
+}
+
+# email_verified : vrai seulement quand c'est vrai
+staff    = ["ctf-managers", "ctf-admins", "infra-admins"]
+verified = user.attributes.get("email_verified", False)
+        or user.groups.filter(name__in=staff).exists()` }],
+    },
+    {
+      title: 'Converger pour de bon : quand ArgoCD voit des écarts imaginaires',
+      text: [
+        "Dernier chantier : obtenir les 28 Applications ArgoCD en Synced et Healthy, et non « à peu près synchronisées ». Une dizaine restaient OutOfSync alors que tout fonctionnait. Avec l'apply côté serveur, ArgoCD possède en bloc les listes et structures atomiques : une valeur par défaut ajoutée par l'API server ou par un webhook y apparaît comme un écart, et ArgoCD resynchronise sans fin. C'était le cas des volumeClaimTemplates des StatefulSets, d'un champ generate: false d'une CR MariaDB, d'un namespace ajouté par un webhook, ou de labels: {} rendus par un chart et jamais stockés.",
+        "La règle que j'ai retenue : d'abord écrire la valeur explicitement dans le manifeste, et ne recourir à ignoreDifferences que lorsque le chart ne permet pas de la fixer. Et le dernier nœud challenges a révélé un dernier détail : NodeRestriction interdit à un nœud de modifier ses taints après son enregistrement. Le taint du pool se pose donc au démarrage du kubelet, pas après coup par Talos.",
+      ],
+    },
+    {
+      title: 'Le résultat',
+      text: [
+        "La phase 12 a fini à 11 contrôles sur 11 : front, Authentik, NetBird et la page de statut en HTTPS public, découverte OIDC, nœuds prêts, cluster Cluster API provisionné, 28 Applications ArgoCD synchronisées et saines, isolation de la zone challenges vérifiée, supervision active. Le SSO fonctionnait sur NetBird et sur Warpgate, avec second facteur pour les comptes à privilèges.",
+        "Côté challenges, une image signée par la CI a été copiée dans le registre interne Zot sous la même empreinte, puis tirée par un nœud du pool challenges avec les identifiants posés par une nouvelle tâche, task zot:pull-auth. Le conteneur a démarré sous les contraintes d'une instance de joueur : user namespace, système de fichiers en lecture seule, aucune capacité, quotas imposés par Kyverno. Je n'ai pas eu le temps de faire un lancement d'instance complet depuis l'interface du joueur avant l'arrêt du lab : c'est le maillon que je n'ai pas vu tourner de bout en bout.",
+      ],
+    },
+    {
+      title: 'Le lab aujourd’hui',
+      text: [
+        "Le lab est arrêté et ne sera pas remis en ligne pour les visiteurs : aucune des URL de la plateforme ne répond. C'était l'esprit du projet dès le départ : une plateforme jetable, qu'on reconstruit quand on en a besoin. Ce qui reste, c'est le dépôt public, qui contient tout le nécessaire pour la redéployer sur un autre hôte, avec tous les correctifs de ce déploiement.",
+        "Reste aussi la documentation : 145 pages MkDocs écrites avec le code, puis corrigées pendant le déploiement (guide en treize phases, quarante entrées de dépannage, fiches des composants, quatorze ADR, trente-deux runbooks). Je l'ai archivée en version statique sur ce site, consultable sans aucune dépendance au lab.",
+      ],
+    },
+    {
+      title: 'Conclusion',
+      text: [
+        "Ce projet m'a appris la différence entre une infrastructure valide et une infrastructure qui tourne. Tout passait en CI avant le premier task up : tofu plan, ansible-lint, kubeconform, les tests. Il a pourtant fallu 116 correctifs pour que la plateforme tourne sur du vrai matériel, et aucun n'était un bug qu'un test hors ligne aurait trouvé. Ce sont des interactions : entre un durcissement et un pont réseau, entre une politique de sécurité et un webhook, entre un budget de RAM et une stratégie de mise à jour, entre une version récente et une valeur par défaut.",
+        "Ce que je garde surtout, c'est la méthode qui a rendu ces 116 correctifs supportables : une source de vérité unique, des phases idempotentes qu'on relance sans crainte, un contrôle automatique pour chaque prérequis découvert, et une documentation tenue à jour à chaque correctif, au point qu'un autre opérateur tomberait aujourd'hui sur la bonne réponse dans le tableau de dépannage. La promesse « une commande » n'est pas magique. Elle tient parce que chaque panne rencontrée est devenue un contrôle, une valeur du contrat ou une ligne de documentation.",
       ],
     },
   ],
   retex: {
     learned: [
-      "Une source de vérité unique (le contrat) évite plus de bugs que n'importe quel test : une IP, un VLAN ou un VMID n'est écrit qu'une fois, et tout le reste le lit.",
-      "Penser l'ordre de bootstrap avant d'écrire le code. Les dépendances circulaires (un IdP dans un LXC, des secrets OIDC générés par tofu) n'apparaissent qu'en dessinant le graphe de dépendances, pas en lisant la documentation de chaque outil.",
-      "Un dépôt public change la gestion des secrets : tout chiffré, et des garde-fous automatiques à la place de la vigilance. La contrainte « reconstruit à chaque fois » a aussi changé ma réponse par rapport à kort (SOPS ici, sealed-secrets là-bas).",
-      "Sur un CTF, les utilisateurs sont les attaquants : la plateforme doit être sûre contre ses propres joueurs (déni de service, tunnel DNS, images piégées, évasions de pod), pas seulement contre l'extérieur.",
-      "Écrire les ADR avec les alternatives écartées m'a obligé à justifier chaque brique.",
-      "Valider hors ligne va loin, mais pas jusqu'au matériel : lint, plan et tests ne remplacent pas un vrai premier task up. Écrire ce qui n'est pas encore validé, noir sur blanc, évite de se mentir.",
+      "Une source de vérité unique (le contrat) évite plus de bugs que n'importe quel test : une IP, un VLAN ou un VMID n'est écrit qu'une fois, et tout le reste le lit. Au déploiement, changer la taille d'un nœud ou la version de Talos s'est résumé à une valeur du contrat.",
+      "Une infrastructure valide n'est pas une infrastructure qui tourne. Tout passait en CI, et il a fallu 116 correctifs sur le matériel : des interactions entre des choix corrects, qu'aucun test hors ligne ne voit.",
+      "« Deny by default » se paie : chaque flux s'ouvre des deux côtés, webhooks et API server compris, et Cilium ne traite pas les IP des nœuds comme des CIDR. Une panne silencieuse sur deux venait de là.",
+      "Un budget de RAM se calcule au pic, pas en régime établi : surge des mises à jour, autoscaler au maximum, cache ZFS. Le dépasser ne donne pas une erreur propre, mais un hôte figé.",
+      "Les valeurs par défaut changent avec les versions (Authentik, Talos, Warpgate) : épingler les versions ne suffit pas, il faut écrire explicitement ce qu'on attend.",
+      "Chaque panne doit laisser une trace utile : un contrôle de phase, une valeur du contrat ou une ligne de dépannage. C'est ce qui rend la promesse « une commande » tenable dans la durée.",
+      "Un dépôt public change la gestion des secrets : tout chiffré, des garde-fous automatiques à la place de la vigilance, et un dépôt privé séparé pour les valeurs du site, réaligné automatiquement après chaque correctif.",
     ],
     next: [
-      "Faire le premier déploiement réel, enchaîner task up, puis chronométrer task rebuild pour vérifier la promesse « une commande ».",
-      "Confirmer sur le matériel les points validés seulement hors ligne (adoption CAPI par ArgoCD, user namespaces Talos, DNS L7 Cilium, rôle NetBird, import OPNsense).",
-      "Tester la matrice de flux avec nmap depuis chaque zone, et valider avec k6 le scaling des pods puis des nœuds ; calibrer le seuil KEDA du front.",
-      "Passer verify-images en Enforce avec une vraie clé cosign, et poser les identifiants de pull de Zot sur les nœuds challenges.",
-      "Faire lire les clés S3 de CTFd depuis SOPS par le Job garage-init, et collecter les blocages OPNsense dans Loki.",
+      "Lancer une instance de challenge de bout en bout depuis l'interface du joueur, le seul maillon que je n'ai pas vu tourner avant l'arrêt.",
+      "Chronométrer un task rebuild complet sur un hôte propre, maintenant que tous les correctifs sont dans le dépôt.",
+      "Tester la matrice de flux avec nmap depuis chaque zone, et valider avec k6 le scaling des pods puis des nœuds.",
+      "Passer la vérification des images en Enforce avec une vraie clé cosign, et protéger la branche main du dépôt public.",
+      "Prévoir plus de 32 Go de RAM, ou un deuxième hôte : la marge au pic est de 644 Mio, ce qui laisse peu de place à l'imprévu.",
     ],
   },
 }
@@ -216,10 +325,10 @@ export const PAD_STATS = [
   ['13', 'phases rejouables, chacune avec son check'],
   ['7', 'zones réseau, deny all journalisé'],
   ['6', 'LXC de services ; OPNsense et Talos en VMs'],
-  ['18', 'composants synchronisés par ArgoCD'],
+  ['28', 'Applications ArgoCD, toutes Synced et Healthy'],
   ['67', 'alertes, chacune avec son runbook'],
-  ['14', 'ADR, alternatives écartées comprises'],
-  ['143', 'pages de documentation (MkDocs, build strict)'],
+  ['116', 'correctifs en 4 jours de déploiement réel'],
+  ['145', 'pages de documentation, archivées sur ce site'],
 ] as const
 
 export const PAD_ZONES = {

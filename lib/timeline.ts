@@ -95,10 +95,11 @@ export const TIMELINE: TimelinePhase[] = [
       },
       {
         title: 'PenetrateAndDestroy : une plateforme CTF jetable',
-        text: "Une plateforme CTF complète que je détruis et reconstruis avec une seule commande, sur un hôte Proxmox : réseau en sept zones derrière OPNsense, cluster Talos géré par Cluster API et ArgoCD, SSO, VPN, instances de challenges isolées par équipe, front sur mesure et supervision. Tout en infrastructure as code, avec les secrets chiffrés dans un dépôt public.",
+        text: "Une plateforme CTF complète que je détruis et reconstruis avec une seule commande, sur un hôte Proxmox : réseau en sept zones derrière OPNsense, cluster Talos géré par Cluster API et ArgoCD, SSO, VPN, instances de challenges isolées par équipe, front sur mesure et supervision. Tout en infrastructure as code, avec les secrets chiffrés dans un dépôt public. Déployée de bout en bout sur mon serveur, puis arrêtée.",
         tags: ['Proxmox', 'OpenTofu', 'Talos', 'ArgoCD', 'Cilium', 'SOPS'],
         links: [
           { label: 'Lire le retour d\u2019expérience', href: '/projets/penetrate-and-destroy' },
+          { label: 'Documentation', href: '/projets/penetrate-and-destroy/documentation' },
           { label: 'Dépôt GitHub', href: 'https://github.com/kim-tsr/penetrate-and-destroy', external: true },
         ],
       },

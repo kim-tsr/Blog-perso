@@ -12,6 +12,8 @@ const eslintConfig = defineConfig([
     "out/**",
     "build/**",
     "next-env.d.ts",
+    // Documentation MkDocs archivée (build statique tiers, JS minifié).
+    "public/pad-docs/**",
   ]),
 ]);
 

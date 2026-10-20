@@ -61,7 +61,9 @@ export default function ProjectDetail({ story: k, overview }: { story: Story; ov
           <p className="kd-intro">{k.intro}</p>
           <ul className="kd-tags">{k.tech.map(t => <li key={t} className="tag">{t}</li>)}</ul>
           <ul className="kd-links">
-            {k.repos.map(r => <li key={r.href}><a href={r.href} target="_blank" rel="noopener noreferrer">{r.label} ↗</a></li>)}
+            {k.repos.map(r => <li key={r.href}>{r.href.startsWith('/')
+              ? <Link href={r.href}>{r.label} →</Link>
+              : <a href={r.href} target="_blank" rel="noopener noreferrer">{r.label} ↗</a>}</li>)}
           </ul>
         </div>
       </header>

@@ -1,0 +1,5645 @@
+
+<!doctype html>
+<html lang="fr" class="no-js">
+  <head>
+    
+      <meta charset="utf-8">
+      <meta name="viewport" content="width=device-width,initial-scale=1">
+      
+        <meta name="description" content="Plateforme CTF jetable et reconstructible de bout en bout, 100 % IaC.">
+      
+      
+      
+      
+        <link rel="prev" href="architecture/supervision.html">
+      
+      
+        <link rel="next" href="composants/index.html">
+      
+      
+      <link rel="icon" href="assets/images/favicon.png">
+      <meta name="generator" content="mkdocs-1.6.1, mkdocs-material-9.6.23">
+    
+    
+      
+        <title>Plan et avancement - PenetrateAndDestroy</title>
+      
+    
+    
+      <link rel="stylesheet" href="assets/stylesheets/main.84d31ad4.min.css">
+      
+        
+        <link rel="stylesheet" href="assets/stylesheets/palette.06af60db.min.css">
+      
+      
+
+
+    
+    
+      
+    
+    
+      
+        
+        
+        <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+        <link rel="stylesheet" href="https://fonts.googleapis.com/css?family=Roboto:300,300i,400,400i,700,700i%7CRoboto+Mono:400,400i,700,700i&display=fallback">
+        <style>:root{--md-text-font:"Roboto";--md-code-font:"Roboto Mono"}</style>
+      
+    
+    
+    <script>__md_scope=new URL(".",location),__md_hash=e=>[...e].reduce(((e,_)=>(e<<5)-e+_.charCodeAt(0)),0),__md_get=(e,_=localStorage,t=__md_scope)=>JSON.parse(_.getItem(t.pathname+"."+e)),__md_set=(e,_,t=localStorage,a=__md_scope)=>{try{t.setItem(a.pathname+"."+e,JSON.stringify(_))}catch(e){}}</script>
+    
+      
+
+    
+    
+    
+  </head>
+  
+  
+    
+    
+      
+    
+    
+    
+    
+    <body dir="ltr" data-md-color-scheme="slate" data-md-color-primary="black" data-md-color-accent="amber">
+  
+    
+    <input class="md-toggle" data-md-toggle="drawer" type="checkbox" id="__drawer" autocomplete="off">
+    <input class="md-toggle" data-md-toggle="search" type="checkbox" id="__search" autocomplete="off">
+    <label class="md-overlay" for="__drawer"></label>
+    <div data-md-component="skip">
+      
+        
+        <a href="#penetrateanddestroy-plateforme-ctf-jetable-de-bout-en-bout-iac-manifests-argocd" class="md-skip">
+          Aller au contenu
+        </a>
+      
+    </div>
+    <div data-md-component="announce">
+      
+        <aside class="md-banner">
+          <div class="md-banner__inner md-grid md-typeset">
+            
+            
+Archive statique de la documentation. Le lab PenetrateAndDestroy a été déployé puis arrêté : aucune URL de la plateforme
+n'est en ligne. Retour au <a href="/projets/penetrate-and-destroy/documentation"><strong>projet sur le blog</strong></a>.
+
+          </div>
+          
+        </aside>
+      
+    </div>
+    
+    
+      
+
+  
+
+<header class="md-header md-header--shadow" data-md-component="header">
+  <nav class="md-header__inner md-grid" aria-label="En-tête">
+    <a href="index.html" title="PenetrateAndDestroy" class="md-header__button md-logo" aria-label="PenetrateAndDestroy" data-md-component="logo">
+      
+  
+  <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24"><path d="M12 8a3 3 0 0 0 3-3 3 3 0 0 0-3-3 3 3 0 0 0-3 3 3 3 0 0 0 3 3m0 3.54C9.64 9.35 6.5 8 3 8v11c3.5 0 6.64 1.35 9 3.54 2.36-2.19 5.5-3.54 9-3.54V8c-3.5 0-6.64 1.35-9 3.54"/></svg>
+
+    </a>
+    <label class="md-header__button md-icon" for="__drawer">
+      
+      <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24"><path d="M3 6h18v2H3zm0 5h18v2H3zm0 5h18v2H3z"/></svg>
+    </label>
+    <div class="md-header__title" data-md-component="header-title">
+      <div class="md-header__ellipsis">
+        <div class="md-header__topic">
+          <span class="md-ellipsis">
+            PenetrateAndDestroy
+          </span>
+        </div>
+        <div class="md-header__topic" data-md-component="header-topic">
+          <span class="md-ellipsis">
+            
+              Plan et avancement
+            
+          </span>
+        </div>
+      </div>
+    </div>
+    
+      
+        <form class="md-header__option" data-md-component="palette">
+  
+    
+    
+    
+    <input class="md-option" data-md-color-media="(prefers-color-scheme: dark)" data-md-color-scheme="slate" data-md-color-primary="black" data-md-color-accent="amber"  aria-label="Passer en thème clair"  type="radio" name="__palette" id="__palette_0">
+    
+      <label class="md-header__button md-icon" title="Passer en thème clair" for="__palette_1" hidden>
+        <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24"><path d="M12 7a5 5 0 0 1 5 5 5 5 0 0 1-5 5 5 5 0 0 1-5-5 5 5 0 0 1 5-5m0 2a3 3 0 0 0-3 3 3 3 0 0 0 3 3 3 3 0 0 0 3-3 3 3 0 0 0-3-3m0-7 2.39 3.42C13.65 5.15 12.84 5 12 5s-1.65.15-2.39.42zM3.34 7l4.16-.35A7.2 7.2 0 0 0 5.94 8.5c-.44.74-.69 1.5-.83 2.29zm.02 10 1.76-3.77a7.131 7.131 0 0 0 2.38 4.14zM20.65 7l-1.77 3.79a7.02 7.02 0 0 0-2.38-4.15zm-.01 10-4.14.36c.59-.51 1.12-1.14 1.54-1.86.42-.73.69-1.5.83-2.29zM12 22l-2.41-3.44c.74.27 1.55.44 2.41.44.82 0 1.63-.17 2.37-.44z"/></svg>
+      </label>
+    
+  
+    
+    
+    
+    <input class="md-option" data-md-color-media="(prefers-color-scheme: light)" data-md-color-scheme="default" data-md-color-primary="black" data-md-color-accent="amber"  aria-label="Passer en thème sombre"  type="radio" name="__palette" id="__palette_1">
+    
+      <label class="md-header__button md-icon" title="Passer en thème sombre" for="__palette_0" hidden>
+        <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24"><path d="m17.75 4.09-2.53 1.94.91 3.06-2.63-1.81-2.63 1.81.91-3.06-2.53-1.94L12.44 4l1.06-3 1.06 3zm3.5 6.91-1.64 1.25.59 1.98-1.7-1.17-1.7 1.17.59-1.98L15.75 11l2.06-.05L18.5 9l.69 1.95zm-2.28 4.95c.83-.08 1.72 1.1 1.19 1.85-.32.45-.66.87-1.08 1.27C15.17 23 8.84 23 4.94 19.07c-3.91-3.9-3.91-10.24 0-14.14.4-.4.82-.76 1.27-1.08.75-.53 1.93.36 1.85 1.19-.27 2.86.69 5.83 2.89 8.02a9.96 9.96 0 0 0 8.02 2.89m-1.64 2.02a12.08 12.08 0 0 1-7.8-3.47c-2.17-2.19-3.33-5-3.49-7.82-2.81 3.14-2.7 7.96.31 10.98 3.02 3.01 7.84 3.12 10.98.31"/></svg>
+      </label>
+    
+  
+</form>
+      
+    
+    
+      <script>var palette=__md_get("__palette");if(palette&&palette.color){if("(prefers-color-scheme)"===palette.color.media){var media=matchMedia("(prefers-color-scheme: light)"),input=document.querySelector(media.matches?"[data-md-color-media='(prefers-color-scheme: light)']":"[data-md-color-media='(prefers-color-scheme: dark)']");palette.color.media=input.getAttribute("data-md-color-media"),palette.color.scheme=input.getAttribute("data-md-color-scheme"),palette.color.primary=input.getAttribute("data-md-color-primary"),palette.color.accent=input.getAttribute("data-md-color-accent")}for(var[key,value]of Object.entries(palette.color))document.body.setAttribute("data-md-color-"+key,value)}</script>
+    
+    
+    
+      
+      
+        <label class="md-header__button md-icon" for="__search">
+          
+          <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24"><path d="M9.5 3A6.5 6.5 0 0 1 16 9.5c0 1.61-.59 3.09-1.56 4.23l.27.27h.79l5 5-1.5 1.5-5-5v-.79l-.27-.27A6.52 6.52 0 0 1 9.5 16 6.5 6.5 0 0 1 3 9.5 6.5 6.5 0 0 1 9.5 3m0 2C7 5 5 7 5 9.5S7 14 9.5 14 14 12 14 9.5 12 5 9.5 5"/></svg>
+        </label>
+        <div class="md-search" data-md-component="search" role="dialog">
+  <label class="md-search__overlay" for="__search"></label>
+  <div class="md-search__inner" role="search">
+    <form class="md-search__form" name="search">
+      <input type="text" class="md-search__input" name="query" aria-label="Rechercher" placeholder="Rechercher" autocapitalize="off" autocorrect="off" autocomplete="off" spellcheck="false" data-md-component="search-query" required>
+      <label class="md-search__icon md-icon" for="__search">
+        
+        <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24"><path d="M9.5 3A6.5 6.5 0 0 1 16 9.5c0 1.61-.59 3.09-1.56 4.23l.27.27h.79l5 5-1.5 1.5-5-5v-.79l-.27-.27A6.52 6.52 0 0 1 9.5 16 6.5 6.5 0 0 1 3 9.5 6.5 6.5 0 0 1 9.5 3m0 2C7 5 5 7 5 9.5S7 14 9.5 14 14 12 14 9.5 12 5 9.5 5"/></svg>
+        
+        <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24"><path d="M20 11v2H8l5.5 5.5-1.42 1.42L4.16 12l7.92-7.92L13.5 5.5 8 11z"/></svg>
+      </label>
+      <nav class="md-search__options" aria-label="Recherche">
+        
+        <button type="reset" class="md-search__icon md-icon" title="Effacer" aria-label="Effacer" tabindex="-1">
+          
+          <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24"><path d="M19 6.41 17.59 5 12 10.59 6.41 5 5 6.41 10.59 12 5 17.59 6.41 19 12 13.41 17.59 19 19 17.59 13.41 12z"/></svg>
+        </button>
+      </nav>
+      
+        <div class="md-search__suggest" data-md-component="search-suggest"></div>
+      
+    </form>
+    <div class="md-search__output">
+      <div class="md-search__scrollwrap" tabindex="0" data-md-scrollfix>
+        <div class="md-search-result" data-md-component="search-result">
+          <div class="md-search-result__meta">
+            Initialisation de la recherche
+          </div>
+          <ol class="md-search-result__list" role="presentation"></ol>
+        </div>
+      </div>
+    </div>
+  </div>
+</div>
+      
+    
+    
+  </nav>
+  
+</header>
+    
+    <div class="md-container" data-md-component="container">
+      
+      
+        
+          
+        
+      
+      <main class="md-main" data-md-component="main">
+        <div class="md-main__inner md-grid">
+          
+            
+              
+              <div class="md-sidebar md-sidebar--primary" data-md-component="sidebar" data-md-type="navigation" >
+                <div class="md-sidebar__scrollwrap">
+                  <div class="md-sidebar__inner">
+                    
+
+
+
+<nav class="md-nav md-nav--primary" aria-label="Navigation" data-md-level="0">
+  <label class="md-nav__title" for="__drawer">
+    <a href="index.html" title="PenetrateAndDestroy" class="md-nav__button md-logo" aria-label="PenetrateAndDestroy" data-md-component="logo">
+      
+  
+  <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24"><path d="M12 8a3 3 0 0 0 3-3 3 3 0 0 0-3-3 3 3 0 0 0-3 3 3 3 0 0 0 3 3m0 3.54C9.64 9.35 6.5 8 3 8v11c3.5 0 6.64 1.35 9 3.54 2.36-2.19 5.5-3.54 9-3.54V8c-3.5 0-6.64 1.35-9 3.54"/></svg>
+
+    </a>
+    PenetrateAndDestroy
+  </label>
+  
+  <ul class="md-nav__list" data-md-scrollfix>
+    
+      
+      
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="index.html" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    Accueil
+    
+  </span>
+  
+
+      </a>
+    </li>
+  
+
+    
+      
+      
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="guide-deploiement.html" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    Guide de déploiement
+    
+  </span>
+  
+
+      </a>
+    </li>
+  
+
+    
+      
+      
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="demarrage-rapide.html" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    Démarrage rapide
+    
+  </span>
+  
+
+      </a>
+    </li>
+  
+
+    
+      
+      
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="fonctionnement.html" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    Comment tout fonctionne
+    
+  </span>
+  
+
+      </a>
+    </li>
+  
+
+    
+      
+      
+  
+  
+    
+  
+  
+  
+    
+    
+      
+        
+          
+        
+      
+        
+      
+        
+      
+        
+      
+        
+      
+        
+      
+        
+      
+        
+      
+        
+      
+    
+    
+    
+      
+        
+        
+      
+    
+    
+    <li class="md-nav__item md-nav__item--active md-nav__item--section md-nav__item--nested">
+      
+        
+        
+        <input class="md-nav__toggle md-toggle " type="checkbox" id="__nav_5" checked>
+        
+          
+          <div class="md-nav__link md-nav__container">
+            <a href="architecture/index.html" class="md-nav__link ">
+              
+  
+  
+  <span class="md-ellipsis">
+    Architecture
+    
+  </span>
+  
+
+            </a>
+            
+              
+              <label class="md-nav__link " for="__nav_5" id="__nav_5_label" tabindex="">
+                <span class="md-nav__icon md-icon"></span>
+              </label>
+            
+          </div>
+        
+        <nav class="md-nav" data-md-level="1" aria-labelledby="__nav_5_label" aria-expanded="true">
+          <label class="md-nav__title" for="__nav_5">
+            <span class="md-nav__icon md-icon"></span>
+            Architecture
+          </label>
+          <ul class="md-nav__list" data-md-scrollfix>
+            
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="architecture/reseau.html" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    Réseau et zones
+    
+  </span>
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="architecture/flux.html" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    Matrice de flux
+    
+  </span>
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="architecture/instances.html" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    Cycle de vie d'une instance
+    
+  </span>
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="architecture/bootstrap.html" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    Bootstrap du cluster
+    
+  </span>
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="architecture/secrets.html" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    Chaîne des secrets
+    
+  </span>
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="architecture/scaling.html" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    Scaling
+    
+  </span>
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="architecture/supervision.html" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    Supervision
+    
+  </span>
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+    
+  
+  
+  
+    <li class="md-nav__item md-nav__item--active">
+      
+      <input class="md-nav__toggle md-toggle" type="checkbox" id="__toc">
+      
+      
+        
+      
+      
+        <label class="md-nav__link md-nav__link--active" for="__toc">
+          
+  
+  
+  <span class="md-ellipsis">
+    Plan et avancement
+    
+  </span>
+  
+
+          <span class="md-nav__icon md-icon"></span>
+        </label>
+      
+      <a href="PLAN.html" class="md-nav__link md-nav__link--active">
+        
+  
+  
+  <span class="md-ellipsis">
+    Plan et avancement
+    
+  </span>
+  
+
+      </a>
+      
+        
+
+<nav class="md-nav md-nav--secondary" aria-label="Table des matières">
+  
+  
+  
+    
+  
+  
+    <label class="md-nav__title" for="__toc">
+      <span class="md-nav__icon md-icon"></span>
+      Table des matières
+    </label>
+    <ul class="md-nav__list" data-md-component="toc" data-md-scrollfix>
+      
+        <li class="md-nav__item">
+  <a href="#contexte" class="md-nav__link">
+    <span class="md-ellipsis">
+      Contexte
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#decisions-darchitecture-adr-resumees" class="md-nav__link">
+    <span class="md-ellipsis">
+      Décisions d'architecture (ADR résumées)
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#budget-de-ressources-cible-8-vcpu-en-surcommit-environ-26-go-de-ram" class="md-nav__link">
+    <span class="md-ellipsis">
+      Budget de ressources cible (8 vCPU en surcommit, environ 26 Go de RAM)
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#reseau" class="md-nav__link">
+    <span class="md-ellipsis">
+      Réseau
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#structure-du-repo" class="md-nav__link">
+    <span class="md-ellipsis">
+      Structure du repo
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#task-up-reconstruction-complete" class="md-nav__link">
+    <span class="md-ellipsis">
+      task up : reconstruction complète
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#scaling" class="md-nav__link">
+    <span class="md-ellipsis">
+      Scaling
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#supervision" class="md-nav__link">
+    <span class="md-ellipsis">
+      Supervision
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#front-nextjs" class="md-nav__link">
+    <span class="md-ellipsis">
+      Front Next.js
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#plan-dexecution-par-sous-agents" class="md-nav__link">
+    <span class="md-ellipsis">
+      Plan d'exécution par sous-agents
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#prerequis-a-fournir-avant-le-deploiement-pas-avant-le-code" class="md-nav__link">
+    <span class="md-ellipsis">
+      Prérequis à fournir (avant le déploiement, pas avant le code)
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#verification" class="md-nav__link">
+    <span class="md-ellipsis">
+      Vérification
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#avancement" class="md-nav__link">
+    <span class="md-ellipsis">
+      Avancement
+    </span>
+  </a>
+  
+    <nav class="md-nav" aria-label="Avancement">
+      <ul class="md-nav__list">
+        
+          <li class="md-nav__item">
+  <a href="#lot-1-termine" class="md-nav__link">
+    <span class="md-ellipsis">
+      Lot 1, terminé
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#lot-2-valeurs-de-site-en-entrees-chiffrees-termine" class="md-nav__link">
+    <span class="md-ellipsis">
+      Lot 2 : valeurs de site en entrées chiffrées, terminé
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#lot-3-durcissement-face-aux-joueurs-revue-de-securite-findings-3-a-6-et-10" class="md-nav__link">
+    <span class="md-ellipsis">
+      Lot 3 : durcissement face aux joueurs (revue de sécurité, findings 3 à 6 et 10)
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#lot-4-durcissement-suite-de-la-revue-de-securite" class="md-nav__link">
+    <span class="md-ellipsis">
+      Lot 4 : durcissement, suite de la revue de sécurité
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#lot-5-pret-a-deployer" class="md-nav__link">
+    <span class="md-ellipsis">
+      Lot 5 : prêt à déployer
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#prochaine-etape" class="md-nav__link">
+    <span class="md-ellipsis">
+      Prochaine étape
+    </span>
+  </a>
+  
+</li>
+        
+      </ul>
+    </nav>
+  
+</li>
+      
+    </ul>
+  
+</nav>
+      
+    </li>
+  
+
+              
+            
+          </ul>
+        </nav>
+      
+    </li>
+  
+
+    
+      
+      
+  
+  
+  
+  
+    
+    
+      
+        
+          
+        
+      
+        
+      
+        
+      
+        
+      
+        
+      
+        
+      
+        
+      
+        
+      
+    
+    
+    
+      
+        
+        
+      
+    
+    
+    <li class="md-nav__item md-nav__item--section md-nav__item--nested">
+      
+        
+        
+        <input class="md-nav__toggle md-toggle " type="checkbox" id="__nav_6" >
+        
+          
+          <div class="md-nav__link md-nav__container">
+            <a href="composants/index.html" class="md-nav__link ">
+              
+  
+  
+  <span class="md-ellipsis">
+    Composants
+    
+  </span>
+  
+
+            </a>
+            
+              
+              <label class="md-nav__link " for="__nav_6" id="__nav_6_label" tabindex="">
+                <span class="md-nav__icon md-icon"></span>
+              </label>
+            
+          </div>
+        
+        <nav class="md-nav" data-md-level="1" aria-labelledby="__nav_6_label" aria-expanded="false">
+          <label class="md-nav__title" for="__nav_6">
+            <span class="md-nav__icon md-icon"></span>
+            Composants
+          </label>
+          <ul class="md-nav__list" data-md-scrollfix>
+            
+              
+            
+              
+                
+  
+  
+  
+  
+    
+    
+      
+        
+      
+        
+      
+        
+      
+        
+      
+        
+      
+        
+      
+        
+      
+        
+      
+        
+      
+        
+      
+        
+      
+    
+    
+    
+      
+    
+    
+    <li class="md-nav__item md-nav__item--nested">
+      
+        
+        
+        <input class="md-nav__toggle md-toggle " type="checkbox" id="__nav_6_2" >
+        
+          
+          <label class="md-nav__link" for="__nav_6_2" id="__nav_6_2_label" tabindex="0">
+            
+  
+  
+  <span class="md-ellipsis">
+    Hyperviseur et réseau
+    
+  </span>
+  
+
+            <span class="md-nav__icon md-icon"></span>
+          </label>
+        
+        <nav class="md-nav" data-md-level="2" aria-labelledby="__nav_6_2_label" aria-expanded="false">
+          <label class="md-nav__title" for="__nav_6_2">
+            <span class="md-nav__icon md-icon"></span>
+            Hyperviseur et réseau
+          </label>
+          <ul class="md-nav__list" data-md-scrollfix>
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="composants/proxmox-ve.html" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    Proxmox VE
+    
+  </span>
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="composants/opentofu.html" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    OpenTofu
+    
+  </span>
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="composants/tofu-bpg-proxmox.html" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    Provider bpg/proxmox
+    
+  </span>
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="composants/tofu-opnsense.html" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    Provider browningluke/opnsense
+    
+  </span>
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="composants/tofu-authentik.html" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    Provider goauthentik/authentik
+    
+  </span>
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="composants/tofu-netbird.html" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    Provider netbirdio/netbird
+    
+  </span>
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="composants/tofu-warpgate.html" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    Provider warp-tech/warpgate
+    
+  </span>
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="composants/tofu-ovh.html" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    Provider ovh/ovh
+    
+  </span>
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="composants/tofu-sops.html" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    Provider carlpett/sops
+    
+  </span>
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="composants/ansible.html" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    Ansible
+    
+  </span>
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="composants/opnsense.html" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    OPNsense
+    
+  </span>
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+          </ul>
+        </nav>
+      
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    
+    
+      
+        
+      
+        
+      
+        
+      
+        
+      
+        
+      
+        
+      
+    
+    
+    
+      
+    
+    
+    <li class="md-nav__item md-nav__item--nested">
+      
+        
+        
+        <input class="md-nav__toggle md-toggle " type="checkbox" id="__nav_6_3" >
+        
+          
+          <label class="md-nav__link" for="__nav_6_3" id="__nav_6_3_label" tabindex="0">
+            
+  
+  
+  <span class="md-ellipsis">
+    Services LXC
+    
+  </span>
+  
+
+            <span class="md-nav__icon md-icon"></span>
+          </label>
+        
+        <nav class="md-nav" data-md-level="2" aria-labelledby="__nav_6_3_label" aria-expanded="false">
+          <label class="md-nav__title" for="__nav_6_3">
+            <span class="md-nav__icon md-icon"></span>
+            Services LXC
+          </label>
+          <ul class="md-nav__list" data-md-scrollfix>
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="composants/traefik-edge.html" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    Traefik (edge)
+    
+  </span>
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="composants/crowdsec.html" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    CrowdSec
+    
+  </span>
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="composants/netbird.html" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    NetBird
+    
+  </span>
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="composants/warpgate.html" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    Warpgate
+    
+  </span>
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="composants/authentik.html" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    Authentik
+    
+  </span>
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="composants/docker-lxc.html" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    Docker et Compose (dans les LXC)
+    
+  </span>
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+          </ul>
+        </nav>
+      
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    
+    
+      
+        
+      
+        
+      
+        
+      
+        
+      
+        
+      
+        
+      
+        
+      
+        
+      
+    
+    
+    
+      
+    
+    
+    <li class="md-nav__item md-nav__item--nested">
+      
+        
+        
+        <input class="md-nav__toggle md-toggle " type="checkbox" id="__nav_6_4" >
+        
+          
+          <label class="md-nav__link" for="__nav_6_4" id="__nav_6_4_label" tabindex="0">
+            
+  
+  
+  <span class="md-ellipsis">
+    Observabilité
+    
+  </span>
+  
+
+            <span class="md-nav__icon md-icon"></span>
+          </label>
+        
+        <nav class="md-nav" data-md-level="2" aria-labelledby="__nav_6_4_label" aria-expanded="false">
+          <label class="md-nav__title" for="__nav_6_4">
+            <span class="md-nav__icon md-icon"></span>
+            Observabilité
+          </label>
+          <ul class="md-nav__list" data-md-scrollfix>
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="composants/victoriametrics.html" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    VictoriaMetrics et vmalert
+    
+  </span>
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="composants/loki.html" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    Loki
+    
+  </span>
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="composants/tempo.html" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    Tempo
+    
+  </span>
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="composants/grafana.html" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    Grafana
+    
+  </span>
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="composants/alertmanager.html" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    Alertmanager
+    
+  </span>
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="composants/uptime-kuma.html" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    Uptime Kuma
+    
+  </span>
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="composants/alloy.html" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    Grafana Alloy
+    
+  </span>
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="composants/exporters.html" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    Exporters (node, pve, kube-state-metrics, Docker)
+    
+  </span>
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+          </ul>
+        </nav>
+      
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    
+    
+      
+        
+      
+        
+      
+        
+      
+        
+      
+        
+      
+        
+      
+        
+      
+        
+      
+        
+      
+        
+      
+        
+      
+    
+    
+    
+      
+    
+    
+    <li class="md-nav__item md-nav__item--nested">
+      
+        
+        
+        <input class="md-nav__toggle md-toggle " type="checkbox" id="__nav_6_5" >
+        
+          
+          <label class="md-nav__link" for="__nav_6_5" id="__nav_6_5_label" tabindex="0">
+            
+  
+  
+  <span class="md-ellipsis">
+    Cluster Kubernetes
+    
+  </span>
+  
+
+            <span class="md-nav__icon md-icon"></span>
+          </label>
+        
+        <nav class="md-nav" data-md-level="2" aria-labelledby="__nav_6_5_label" aria-expanded="false">
+          <label class="md-nav__title" for="__nav_6_5">
+            <span class="md-nav__icon md-icon"></span>
+            Cluster Kubernetes
+          </label>
+          <ul class="md-nav__list" data-md-scrollfix>
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="composants/talos.html" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    Talos Linux
+    
+  </span>
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="composants/cluster-api.html" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    Cluster API (core)
+    
+  </span>
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="composants/capmox.html" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    CAPMOX (provider Proxmox)
+    
+  </span>
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="composants/cabpt-cacppt.html" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    CABPT et CACPPT (providers Talos)
+    
+  </span>
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="composants/ipam-in-cluster.html" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    IPAM in-cluster (Cluster API)
+    
+  </span>
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="composants/kind.html" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    kind (bootstrap)
+    
+  </span>
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="composants/cluster-autoscaler.html" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    cluster-autoscaler
+    
+  </span>
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="composants/cilium-hubble.html" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    Cilium et Hubble
+    
+  </span>
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="composants/proxmox-ccm.html" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    Proxmox CCM
+    
+  </span>
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="composants/proxmox-csi.html" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    Proxmox CSI
+    
+  </span>
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="composants/traefik-cluster.html" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    Traefik (cluster)
+    
+  </span>
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+          </ul>
+        </nav>
+      
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    
+    
+      
+        
+      
+        
+      
+        
+      
+        
+      
+        
+      
+        
+      
+        
+      
+        
+      
+        
+      
+        
+      
+        
+      
+    
+    
+    
+      
+    
+    
+    <li class="md-nav__item md-nav__item--nested">
+      
+        
+        
+        <input class="md-nav__toggle md-toggle " type="checkbox" id="__nav_6_6" >
+        
+          
+          <label class="md-nav__link" for="__nav_6_6" id="__nav_6_6_label" tabindex="0">
+            
+  
+  
+  <span class="md-ellipsis">
+    Plateforme GitOps
+    
+  </span>
+  
+
+            <span class="md-nav__icon md-icon"></span>
+          </label>
+        
+        <nav class="md-nav" data-md-level="2" aria-labelledby="__nav_6_6_label" aria-expanded="false">
+          <label class="md-nav__title" for="__nav_6_6">
+            <span class="md-nav__icon md-icon"></span>
+            Plateforme GitOps
+          </label>
+          <ul class="md-nav__list" data-md-scrollfix>
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="composants/argocd.html" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    ArgoCD
+    
+  </span>
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="composants/sops-age-ksops.html" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    SOPS, age et ksops
+    
+  </span>
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="composants/cert-manager.html" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    cert-manager
+    
+  </span>
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="composants/kyverno.html" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    Kyverno
+    
+  </span>
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="composants/keda.html" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    KEDA
+    
+  </span>
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="composants/external-dns.html" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    external-dns
+    
+  </span>
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="composants/mariadb.html" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    mariadb-operator et MariaDB
+    
+  </span>
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="composants/valkey.html" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    Valkey
+    
+  </span>
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="composants/garage.html" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    Garage (S3)
+    
+  </span>
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="composants/zot.html" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    Zot (registry OCI)
+    
+  </span>
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="composants/cosign-trivy.html" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    cosign et Trivy
+    
+  </span>
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+          </ul>
+        </nav>
+      
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    
+    
+      
+        
+      
+        
+      
+        
+      
+        
+      
+        
+      
+        
+      
+        
+      
+        
+      
+        
+      
+        
+      
+        
+      
+        
+      
+    
+    
+    
+      
+    
+    
+    <li class="md-nav__item md-nav__item--nested">
+      
+        
+        
+        <input class="md-nav__toggle md-toggle " type="checkbox" id="__nav_6_7" >
+        
+          
+          <label class="md-nav__link" for="__nav_6_7" id="__nav_6_7_label" tabindex="0">
+            
+  
+  
+  <span class="md-ellipsis">
+    Applications CTF
+    
+  </span>
+  
+
+            <span class="md-nav__icon md-icon"></span>
+          </label>
+        
+        <nav class="md-nav" data-md-level="2" aria-labelledby="__nav_6_7_label" aria-expanded="false">
+          <label class="md-nav__title" for="__nav_6_7">
+            <span class="md-nav__icon md-icon"></span>
+            Applications CTF
+          </label>
+          <ul class="md-nav__list" data-md-scrollfix>
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="composants/ctfd.html" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    CTFd (headless)
+    
+  </span>
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="composants/ctfd-plugin-pad-common.html" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    Plugin CTFd pad_common
+    
+  </span>
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="composants/ctfd-plugin-sso-bridge.html" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    Plugin CTFd sso_bridge
+    
+  </span>
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="composants/ctfd-plugin-chall-manager-bridge.html" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    Plugin CTFd chall_manager_bridge
+    
+  </span>
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="composants/ctfd-plugin-pad-teams.html" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    Plugin CTFd pad_teams
+    
+  </span>
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="composants/ctfd-plugin-pad-public.html" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    Plugin CTFd pad_public
+    
+  </span>
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="composants/ctfd-plugin-manager-api.html" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    Plugin CTFd manager_api
+    
+  </span>
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="composants/ctfd-plugin-metrics-exporter.html" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    Plugin CTFd metrics_exporter
+    
+  </span>
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="composants/chall-manager.html" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    chall-manager
+    
+  </span>
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="composants/chall-manager-scenario.html" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    Scénario Pulumi Go (instance générique)
+    
+  </span>
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="composants/netbird-sync.html" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    netbird-sync
+    
+  </span>
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="composants/frontend.html" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    Front Next.js (Auth.js et BFF)
+    
+  </span>
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+          </ul>
+        </nav>
+      
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    
+    
+      
+        
+      
+        
+      
+        
+      
+        
+      
+        
+      
+        
+      
+        
+      
+    
+    
+    
+      
+    
+    
+    <li class="md-nav__item md-nav__item--nested">
+      
+        
+        
+        <input class="md-nav__toggle md-toggle " type="checkbox" id="__nav_6_8" >
+        
+          
+          <label class="md-nav__link" for="__nav_6_8" id="__nav_6_8_label" tabindex="0">
+            
+  
+  
+  <span class="md-ellipsis">
+    Outillage et CI
+    
+  </span>
+  
+
+            <span class="md-nav__icon md-icon"></span>
+          </label>
+        
+        <nav class="md-nav" data-md-level="2" aria-labelledby="__nav_6_8_label" aria-expanded="false">
+          <label class="md-nav__title" for="__nav_6_8">
+            <span class="md-nav__icon md-icon"></span>
+            Outillage et CI
+          </label>
+          <ul class="md-nav__list" data-md-scrollfix>
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="composants/nix.html" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    Nix (devshell)
+    
+  </span>
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="composants/taskfile.html" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    Taskfile (go-task)
+    
+  </span>
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="composants/github-actions.html" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    GitHub Actions
+    
+  </span>
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="composants/renovate-dependabot.html" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    Renovate et Dependabot
+    
+  </span>
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="composants/k6.html" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    k6 (tests de charge)
+    
+  </span>
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="composants/playwright.html" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    Playwright (tests e2e du front)
+    
+  </span>
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="composants/mkdocs.html" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    MkDocs Material (documentation)
+    
+  </span>
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+          </ul>
+        </nav>
+      
+    </li>
+  
+
+              
+            
+          </ul>
+        </nav>
+      
+    </li>
+  
+
+    
+      
+      
+  
+  
+  
+  
+    
+    
+      
+        
+          
+        
+      
+        
+      
+        
+      
+        
+      
+        
+      
+        
+      
+        
+      
+        
+      
+        
+      
+        
+      
+        
+      
+        
+      
+        
+      
+        
+      
+        
+      
+    
+    
+    
+      
+        
+        
+      
+    
+    
+    <li class="md-nav__item md-nav__item--section md-nav__item--nested">
+      
+        
+        
+        <input class="md-nav__toggle md-toggle " type="checkbox" id="__nav_7" >
+        
+          
+          <div class="md-nav__link md-nav__container">
+            <a href="adr/index.html" class="md-nav__link ">
+              
+  
+  
+  <span class="md-ellipsis">
+    Décisions (ADR)
+    
+  </span>
+  
+
+            </a>
+            
+              
+              <label class="md-nav__link " for="__nav_7" id="__nav_7_label" tabindex="">
+                <span class="md-nav__icon md-icon"></span>
+              </label>
+            
+          </div>
+        
+        <nav class="md-nav" data-md-level="1" aria-labelledby="__nav_7_label" aria-expanded="false">
+          <label class="md-nav__title" for="__nav_7">
+            <span class="md-nav__icon md-icon"></span>
+            Décisions (ADR)
+          </label>
+          <ul class="md-nav__list" data-md-scrollfix>
+            
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="adr/001-routeur-opnsense.html" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    1. Routeur OPNsense
+    
+  </span>
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="adr/002-idp-authentik.html" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    2. IdP Authentik
+    
+  </span>
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="adr/003-iac-hyperviseur.html" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    3. OpenTofu et bpg/proxmox
+    
+  </span>
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="adr/004-talos.html" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    4. Talos Linux
+    
+  </span>
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="adr/005-cluster-api.html" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    5. Cluster API auto-hébergé
+    
+  </span>
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="adr/006-autoscaling-noeuds.html" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    6. Autoscaling des nœuds
+    
+  </span>
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="adr/007-gitops-argocd.html" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    7. ArgoCD et GitOps
+    
+  </span>
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="adr/008-secrets-sops.html" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    8. SOPS et age
+    
+  </span>
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="adr/009-cilium.html" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    9. Cilium
+    
+  </span>
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="adr/010-stockage.html" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    10. Stockage
+    
+  </span>
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="adr/011-bases-de-donnees.html" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    11. Bases de données
+    
+  </span>
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="adr/012-chall-manager.html" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    12. chall-manager
+    
+  </span>
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="adr/013-registry-zot.html" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    13. Registry Zot
+    
+  </span>
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="adr/014-kyverno.html" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    14. Kyverno
+    
+  </span>
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+          </ul>
+        </nav>
+      
+    </li>
+  
+
+    
+      
+      
+  
+  
+  
+  
+    
+    
+      
+        
+      
+        
+      
+        
+      
+        
+      
+        
+      
+    
+    
+    
+      
+        
+        
+      
+    
+    
+    <li class="md-nav__item md-nav__item--section md-nav__item--nested">
+      
+        
+        
+        <input class="md-nav__toggle md-toggle " type="checkbox" id="__nav_8" >
+        
+          
+          <label class="md-nav__link" for="__nav_8" id="__nav_8_label" tabindex="">
+            
+  
+  
+  <span class="md-ellipsis">
+    Opérations
+    
+  </span>
+  
+
+            <span class="md-nav__icon md-icon"></span>
+          </label>
+        
+        <nav class="md-nav" data-md-level="1" aria-labelledby="__nav_8_label" aria-expanded="false">
+          <label class="md-nav__title" for="__nav_8">
+            <span class="md-nav__icon md-icon"></span>
+            Opérations
+          </label>
+          <ul class="md-nav__list" data-md-scrollfix>
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="operations/actions-post-deploiement.html" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    Actions manuelles après déploiement
+    
+  </span>
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="operations/securite-identite.html" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    Identité : MFA, privilèges, console d'administration
+    
+  </span>
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="operations/protection-branche.html" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    Protection de la branche main (à activer par l'opérateur)
+    
+  </span>
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="operations/images-signees.html" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    Images signées et épinglées
+    
+  </span>
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="SECRETS.html" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    Secrets (SOPS + age)
+    
+  </span>
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+          </ul>
+        </nav>
+      
+    </li>
+  
+
+    
+      
+      
+  
+  
+  
+  
+    
+    
+      
+        
+          
+        
+      
+        
+      
+        
+      
+    
+    
+    
+      
+        
+        
+      
+    
+    
+    <li class="md-nav__item md-nav__item--section md-nav__item--nested">
+      
+        
+        
+        <input class="md-nav__toggle md-toggle " type="checkbox" id="__nav_9" >
+        
+          
+          <div class="md-nav__link md-nav__container">
+            <a href="runbooks/index.html" class="md-nav__link ">
+              
+  
+  
+  <span class="md-ellipsis">
+    Runbooks
+    
+  </span>
+  
+
+            </a>
+            
+              
+              <label class="md-nav__link " for="__nav_9" id="__nav_9_label" tabindex="">
+                <span class="md-nav__icon md-icon"></span>
+              </label>
+            
+          </div>
+        
+        <nav class="md-nav" data-md-level="1" aria-labelledby="__nav_9_label" aria-expanded="false">
+          <label class="md-nav__title" for="__nav_9">
+            <span class="md-nav__icon md-icon"></span>
+            Runbooks
+          </label>
+          <ul class="md-nav__list" data-md-scrollfix>
+            
+              
+            
+              
+                
+  
+  
+  
+  
+    
+    
+      
+        
+      
+        
+      
+        
+      
+        
+      
+        
+      
+        
+      
+    
+    
+    
+      
+    
+    
+    <li class="md-nav__item md-nav__item--nested">
+      
+        
+        
+        <input class="md-nav__toggle md-toggle " type="checkbox" id="__nav_9_2" >
+        
+          
+          <label class="md-nav__link" for="__nav_9_2" id="__nav_9_2_label" tabindex="0">
+            
+  
+  
+  <span class="md-ellipsis">
+    Procédures
+    
+  </span>
+  
+
+            <span class="md-nav__icon md-icon"></span>
+          </label>
+        
+        <nav class="md-nav" data-md-level="2" aria-labelledby="__nav_9_2_label" aria-expanded="false">
+          <label class="md-nav__title" for="__nav_9_2">
+            <span class="md-nav__icon md-icon"></span>
+            Procédures
+          </label>
+          <ul class="md-nav__list" data-md-scrollfix>
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="runbooks/up.html" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    Up : déployer la plateforme
+    
+  </span>
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="runbooks/destroy.html" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    Destroy : supprimer le cluster ou la plateforme
+    
+  </span>
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="runbooks/rebuild.html" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    Rebuild : détruire puis reconstruire
+    
+  </span>
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="runbooks/backup-restore.html" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    Sauvegarde et restauration
+    
+  </span>
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="runbooks/incident.html" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    Incident générique
+    
+  </span>
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="runbooks/rotation-secrets.html" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    Rotation des secrets
+    
+  </span>
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+          </ul>
+        </nav>
+      
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    
+    
+      
+        
+      
+        
+      
+        
+      
+        
+      
+        
+      
+        
+      
+        
+      
+        
+      
+        
+      
+        
+      
+        
+      
+        
+      
+        
+      
+        
+      
+        
+      
+        
+      
+        
+      
+        
+      
+        
+      
+        
+      
+        
+      
+        
+      
+        
+      
+        
+      
+        
+      
+    
+    
+    
+      
+    
+    
+    <li class="md-nav__item md-nav__item--nested">
+      
+        
+        
+        <input class="md-nav__toggle md-toggle " type="checkbox" id="__nav_9_3" >
+        
+          
+          <label class="md-nav__link" for="__nav_9_3" id="__nav_9_3_label" tabindex="0">
+            
+  
+  
+  <span class="md-ellipsis">
+    Alertes
+    
+  </span>
+  
+
+            <span class="md-nav__icon md-icon"></span>
+          </label>
+        
+        <nav class="md-nav" data-md-level="2" aria-labelledby="__nav_9_3_label" aria-expanded="false">
+          <label class="md-nav__title" for="__nav_9_3">
+            <span class="md-nav__icon md-icon"></span>
+            Alertes
+          </label>
+          <ul class="md-nav__list" data-md-scrollfix>
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="runbooks/alertmanager-notifications.html" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    Alertmanager n'arrive pas à notifier
+    
+  </span>
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="runbooks/alloy-telemetry.html" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    Télémétrie Alloy
+    
+  </span>
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="runbooks/argocd.html" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    ArgoCD
+    
+  </span>
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="runbooks/authentik.html" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    Authentik
+    
+  </span>
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="runbooks/autoscaling.html" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    Autoscaling (KEDA, HPA, cluster-autoscaler)
+    
+  </span>
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="runbooks/certificates.html" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    Certificats TLS
+    
+  </span>
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="runbooks/crowdsec.html" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    CrowdSec
+    
+  </span>
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="runbooks/ctfd.html" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    CTFd
+    
+  </span>
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="runbooks/docker-lxc.html" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    Docker dans un LXC
+    
+  </span>
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="runbooks/frontend.html" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    Front Next.js
+    
+  </span>
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="runbooks/host-disk.html" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    Disque saturé
+    
+  </span>
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="runbooks/host-resources.html" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    CPU, mémoire et horloge
+    
+  </span>
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="runbooks/ingress.html" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    Ingress Traefik du cluster
+    
+  </span>
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="runbooks/instance-down.html" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    Cible de supervision injoignable
+    
+  </span>
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="runbooks/instances.html" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    Instances de challenges
+    
+  </span>
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="runbooks/kubernetes-nodes.html" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    Nœuds Kubernetes
+    
+  </span>
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="runbooks/kubernetes-workloads.html" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    Charges Kubernetes
+    
+  </span>
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="runbooks/kyverno.html" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    Kyverno
+    
+  </span>
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="runbooks/monitoring-stack.html" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    Pile de supervision
+    
+  </span>
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="runbooks/netbird-sync.html" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    netbird-sync
+    
+  </span>
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="runbooks/opnsense-down.html" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    OPNsense indisponible
+    
+  </span>
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="runbooks/proxmox-guest-down.html" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    Invité Proxmox arrêté
+    
+  </span>
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="runbooks/proxmox-host.html" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    Hôte Proxmox
+    
+  </span>
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="runbooks/proxmox-storage.html" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    Stockage Proxmox et ZFS
+    
+  </span>
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="runbooks/watchdog.html" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    Watchdog (dead-man's switch)
+    
+  </span>
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+          </ul>
+        </nav>
+      
+    </li>
+  
+
+              
+            
+          </ul>
+        </nav>
+      
+    </li>
+  
+
+    
+      
+      
+  
+  
+  
+  
+    
+    
+      
+        
+          
+        
+      
+        
+      
+    
+    
+    
+      
+        
+        
+      
+    
+    
+    <li class="md-nav__item md-nav__item--section md-nav__item--nested">
+      
+        
+        
+        <input class="md-nav__toggle md-toggle " type="checkbox" id="__nav_10" >
+        
+          
+          <div class="md-nav__link md-nav__container">
+            <a href="player/index.html" class="md-nav__link ">
+              
+  
+  
+  <span class="md-ellipsis">
+    Guide joueur
+    
+  </span>
+  
+
+            </a>
+            
+              
+              <label class="md-nav__link " for="__nav_10" id="__nav_10_label" tabindex="">
+                <span class="md-nav__icon md-icon"></span>
+              </label>
+            
+          </div>
+        
+        <nav class="md-nav" data-md-level="1" aria-labelledby="__nav_10_label" aria-expanded="false">
+          <label class="md-nav__title" for="__nav_10">
+            <span class="md-nav__icon md-icon"></span>
+            Guide joueur
+          </label>
+          <ul class="md-nav__list" data-md-scrollfix>
+            
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="player/instances.html" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    Instances de challenges
+    
+  </span>
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+          </ul>
+        </nav>
+      
+    </li>
+  
+
+    
+      
+      
+  
+  
+  
+  
+    
+    
+      
+        
+          
+        
+      
+        
+      
+        
+      
+        
+      
+        
+      
+    
+    
+    
+      
+        
+        
+      
+    
+    
+    <li class="md-nav__item md-nav__item--section md-nav__item--nested">
+      
+        
+        
+        <input class="md-nav__toggle md-toggle " type="checkbox" id="__nav_11" >
+        
+          
+          <div class="md-nav__link md-nav__container">
+            <a href="manager/index.html" class="md-nav__link ">
+              
+  
+  
+  <span class="md-ellipsis">
+    Guide manager
+    
+  </span>
+  
+
+            </a>
+            
+              
+              <label class="md-nav__link " for="__nav_11" id="__nav_11_label" tabindex="">
+                <span class="md-nav__icon md-icon"></span>
+              </label>
+            
+          </div>
+        
+        <nav class="md-nav" data-md-level="1" aria-labelledby="__nav_11_label" aria-expanded="false">
+          <label class="md-nav__title" for="__nav_11">
+            <span class="md-nav__icon md-icon"></span>
+            Guide manager
+          </label>
+          <ul class="md-nav__list" data-md-scrollfix>
+            
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="manager/challenge-yml.html" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    Format challenge.yml
+    
+  </span>
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="manager/import-zip.html" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    Import par ZIP
+    
+  </span>
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="manager/depot-prive.html" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    Mode Git (dépôt privé)
+    
+  </span>
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="manager/exploitation-evenement.html" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    Instances, événement, modération
+    
+  </span>
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+          </ul>
+        </nav>
+      
+    </li>
+  
+
+    
+      
+      
+  
+  
+  
+  
+    
+    
+      
+        
+      
+        
+      
+        
+      
+        
+      
+        
+      
+    
+    
+    
+      
+        
+        
+      
+    
+    
+    <li class="md-nav__item md-nav__item--section md-nav__item--nested">
+      
+        
+        
+        <input class="md-nav__toggle md-toggle " type="checkbox" id="__nav_12" >
+        
+          
+          <label class="md-nav__link" for="__nav_12" id="__nav_12_label" tabindex="">
+            
+  
+  
+  <span class="md-ellipsis">
+    Référence
+    
+  </span>
+  
+
+            <span class="md-nav__icon md-icon"></span>
+          </label>
+        
+        <nav class="md-nav" data-md-level="1" aria-labelledby="__nav_12_label" aria-expanded="false">
+          <label class="md-nav__title" for="__nav_12">
+            <span class="md-nav__icon md-icon"></span>
+            Référence
+          </label>
+          <ul class="md-nav__list" data-md-scrollfix>
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="reference/contrat.html" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    Le contrat infra/contracts.yaml
+    
+  </span>
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="reference/site.html" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    Valeurs de site
+    
+  </span>
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="reference/taches.html" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    Tâches task
+    
+  </span>
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="reference/api-plugins.html" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    API des plugins CTFd
+    
+  </span>
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="reference/limites.html" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    Limites connues et points à valider
+    
+  </span>
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+          </ul>
+        </nav>
+      
+    </li>
+  
+
+    
+  </ul>
+</nav>
+                  </div>
+                </div>
+              </div>
+            
+            
+              
+              <div class="md-sidebar md-sidebar--secondary" data-md-component="sidebar" data-md-type="toc" >
+                <div class="md-sidebar__scrollwrap">
+                  <div class="md-sidebar__inner">
+                    
+
+<nav class="md-nav md-nav--secondary" aria-label="Table des matières">
+  
+  
+  
+    
+  
+  
+    <label class="md-nav__title" for="__toc">
+      <span class="md-nav__icon md-icon"></span>
+      Table des matières
+    </label>
+    <ul class="md-nav__list" data-md-component="toc" data-md-scrollfix>
+      
+        <li class="md-nav__item">
+  <a href="#contexte" class="md-nav__link">
+    <span class="md-ellipsis">
+      Contexte
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#decisions-darchitecture-adr-resumees" class="md-nav__link">
+    <span class="md-ellipsis">
+      Décisions d'architecture (ADR résumées)
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#budget-de-ressources-cible-8-vcpu-en-surcommit-environ-26-go-de-ram" class="md-nav__link">
+    <span class="md-ellipsis">
+      Budget de ressources cible (8 vCPU en surcommit, environ 26 Go de RAM)
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#reseau" class="md-nav__link">
+    <span class="md-ellipsis">
+      Réseau
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#structure-du-repo" class="md-nav__link">
+    <span class="md-ellipsis">
+      Structure du repo
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#task-up-reconstruction-complete" class="md-nav__link">
+    <span class="md-ellipsis">
+      task up : reconstruction complète
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#scaling" class="md-nav__link">
+    <span class="md-ellipsis">
+      Scaling
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#supervision" class="md-nav__link">
+    <span class="md-ellipsis">
+      Supervision
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#front-nextjs" class="md-nav__link">
+    <span class="md-ellipsis">
+      Front Next.js
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#plan-dexecution-par-sous-agents" class="md-nav__link">
+    <span class="md-ellipsis">
+      Plan d'exécution par sous-agents
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#prerequis-a-fournir-avant-le-deploiement-pas-avant-le-code" class="md-nav__link">
+    <span class="md-ellipsis">
+      Prérequis à fournir (avant le déploiement, pas avant le code)
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#verification" class="md-nav__link">
+    <span class="md-ellipsis">
+      Vérification
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#avancement" class="md-nav__link">
+    <span class="md-ellipsis">
+      Avancement
+    </span>
+  </a>
+  
+    <nav class="md-nav" aria-label="Avancement">
+      <ul class="md-nav__list">
+        
+          <li class="md-nav__item">
+  <a href="#lot-1-termine" class="md-nav__link">
+    <span class="md-ellipsis">
+      Lot 1, terminé
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#lot-2-valeurs-de-site-en-entrees-chiffrees-termine" class="md-nav__link">
+    <span class="md-ellipsis">
+      Lot 2 : valeurs de site en entrées chiffrées, terminé
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#lot-3-durcissement-face-aux-joueurs-revue-de-securite-findings-3-a-6-et-10" class="md-nav__link">
+    <span class="md-ellipsis">
+      Lot 3 : durcissement face aux joueurs (revue de sécurité, findings 3 à 6 et 10)
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#lot-4-durcissement-suite-de-la-revue-de-securite" class="md-nav__link">
+    <span class="md-ellipsis">
+      Lot 4 : durcissement, suite de la revue de sécurité
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#lot-5-pret-a-deployer" class="md-nav__link">
+    <span class="md-ellipsis">
+      Lot 5 : prêt à déployer
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#prochaine-etape" class="md-nav__link">
+    <span class="md-ellipsis">
+      Prochaine étape
+    </span>
+  </a>
+  
+</li>
+        
+      </ul>
+    </nav>
+  
+</li>
+      
+    </ul>
+  
+</nav>
+                  </div>
+                </div>
+              </div>
+            
+          
+          
+            <div class="md-content" data-md-component="content">
+              <article class="md-content__inner md-typeset">
+                
+                  
+
+
+
+<h1 id="penetrateanddestroy-plateforme-ctf-jetable-de-bout-en-bout-iac-manifests-argocd">PenetrateAndDestroy : plateforme CTF jetable, de bout en bout (IaC + manifests + ArgoCD)<a class="headerlink" href="#penetrateanddestroy-plateforme-ctf-jetable-de-bout-en-bout-iac-manifests-argocd" title="Permanent link">&para;</a></h1>
+<h2 id="contexte">Contexte<a class="headerlink" href="#contexte" title="Permanent link">&para;</a></h2>
+<p>On construit une plateforme CTF complète, jetable et reconstructible, sur un hôte Proxmox VE unique. Les valeurs propres à l'hôte
+(URL de l'API, accès SSH, IP publique, passerelle, MAC) ne sont pas dans le repo : l'opérateur les fournit dans
+<code>secrets/site.sops.yaml</code> (chiffré SOPS, modèle <code>secrets/site.example.yaml</code>).</p>
+<p>Exigences :
+- tout en IaC, avec des manifests Kubernetes déployés par ArgoCD et des builds reproductibles ;
+- une architecture <strong>jetable et reconstructible</strong> avec une seule commande ;
+- des zones réseau derrière un routeur, un VPN NetBird, un bastion Warpgate et un IdP ;
+- un cluster Kubernetes de prod qui scale avec le nombre de joueurs ;
+- CTFd en moteur headless derrière un <strong>front Next.js entièrement sur mesure</strong>, avec un espace joueur et un portail manager ;
+- des challenges instanciés par équipe ;
+- une supervision complète ;
+- une documentation finale.</p>
+<p>Décisions validées par l'utilisateur :
+- les services d'infra tournent en <strong>LXC</strong> (OPNsense et Talos restent des VMs) ;
+- le monorepo est <strong><code>kim-tsr/penetrate-and-destroy</code></strong> (GitHub), destiné à devenir <strong>public</strong> : projet perso présenté publiquement, mais plateforme pleinement utilisable. Aucun secret ni identifiant d'infra réel dans le repo ;
+- le front est public et les challenges ne sont joignables que via NetBird ;
+- le front est en Next.js et CTFd tourne en headless ;
+- les challenges sont instanciés par équipe.</p>
+<h2 id="decisions-darchitecture-adr-resumees">Décisions d'architecture (ADR résumées)<a class="headerlink" href="#decisions-darchitecture-adr-resumees" title="Permanent link">&para;</a></h2>
+<table>
+<thead>
+<tr>
+<th>Sujet</th>
+<th>Choix</th>
+<th>Justification</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td>Routeur / firewall</td>
+<td><strong>OPNsense</strong> en VM</td>
+<td>Segmentation inter-zones, IDS Suricata, exporter Prometheus. Le bootstrap passe par l'import d'un <code>config.xml</code> templaté au boot, puis les règles sont gérées par le provider tofu <code>browningluke/opnsense</code>.</td>
+</tr>
+<tr>
+<td>IdP</td>
+<td><strong>Authentik</strong></td>
+<td>Flows personnalisables (auto-inscription des joueurs avec captcha et vérification d'email, invitations staff). Outpost forward-auth pour les apps sans OIDC (VictoriaMetrics, Alertmanager, Hubble). Provider Terraform officiel et blueprints, donc 100 % IaC. Intégrations documentées avec NetBird, Warpgate, Grafana, ArgoCD et Proxmox. Zitadel est plus léger et excellent en multi-tenant B2B, mais on n'a pas besoin du multi-org et il est plus pauvre en forward-auth et en flows.</td>
+</tr>
+<tr>
+<td>IaC hyperviseur</td>
+<td>OpenTofu + <code>bpg/proxmox</code></td>
+<td>Bridges, VMs, LXC et téléchargement des images épinglées par checksum (pas besoin de Packer). Le state est chiffré nativement par OpenTofu.</td>
+</tr>
+<tr>
+<td>OS Kubernetes</td>
+<td><strong>Talos Linux</strong> (schematic Image Factory avec qemu-guest-agent)</td>
+<td>Immuable, API-only, sans SSH : idéal pour du jetable.</td>
+</tr>
+<tr>
+<td>Cycle de vie du cluster</td>
+<td><strong>Cluster API</strong> (CAPMOX + CABPT/CACPPT), <strong>auto-hébergé</strong></td>
+<td>Le bootstrap se fait dans un cluster <code>kind</code> éphémère, puis <code>clusterctl move</code> transfère la gestion dans le cluster de prod lui-même. On n'a pas de cluster de management permanent, et on économise environ 6 Go de RAM.</td>
+</tr>
+<tr>
+<td>Scaling des nœuds</td>
+<td>cluster-autoscaler (provider clusterapi) sur la MachineDeployment <code>challenges</code></td>
+<td>Ajoute ou retire des VMs Talos selon les pods en attente.</td>
+</tr>
+<tr>
+<td>GitOps</td>
+<td><strong>ArgoCD dans le cluster de prod</strong>, en apps-of-apps et ApplicationSets</td>
+<td>Tout ce qui tourne dans Kubernetes est déclaré en manifests ou en Helm dans le repo. Aucun <code>kubectl apply</code> manuel en dehors du bootstrap.</td>
+</tr>
+<tr>
+<td>Secrets</td>
+<td>SOPS + age (ksops dans ArgoCD, <code>community.sops</code> dans Ansible, provider <code>carlpett/sops</code> dans tofu)</td>
+<td>Commités <strong>chiffrés</strong> dans Git (décision du lot 1). Deux recipients : clé opérateur (tout) et clé cluster (<code>gitops/**</code> uniquement). Rien en clair. Voir <code>docs/SECRETS.md</code>.</td>
+</tr>
+<tr>
+<td>CNI</td>
+<td>Cilium (sans kube-proxy, LB-IPAM, policies L3/L7, Hubble, WireGuard)</td>
+<td>Isolation des instances de challenges entre elles.</td>
+</tr>
+<tr>
+<td>Stockage</td>
+<td>Proxmox CSI plugin (ZFS) et Garage (S3) pour les uploads CTFd et les sauvegardes</td>
+<td></td>
+</tr>
+<tr>
+<td>Base de données</td>
+<td>mariadb-operator (MariaDB, la DB officielle de CTFd) et Valkey</td>
+<td></td>
+</tr>
+<tr>
+<td>Instancier</td>
+<td><strong>chall-manager</strong> (ctfer-io) : scénarios Kubernetes, TTL, OTel, API</td>
+<td>Le front l'appelle via le BFF.</td>
+</tr>
+<tr>
+<td>Registry</td>
+<td>Zot avec scan Trivy et signature cosign (politique Kyverno <code>verifyImages</code>)</td>
+<td></td>
+</tr>
+<tr>
+<td>Policies</td>
+<td>Kyverno : PSS restricted sur les namespaces de challenges, verifyImages, labels obligatoires</td>
+<td></td>
+</tr>
+</tbody>
+</table>
+<h2 id="budget-de-ressources-cible-8-vcpu-en-surcommit-environ-26-go-de-ram">Budget de ressources cible (8 vCPU en surcommit, environ 26 Go de RAM)<a class="headerlink" href="#budget-de-ressources-cible-8-vcpu-en-surcommit-environ-26-go-de-ram" title="Permanent link">&para;</a></h2>
+<table>
+<thead>
+<tr>
+<th>Composant</th>
+<th>Type</th>
+<th>vCPU</th>
+<th>RAM</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td>OPNsense</td>
+<td>VM</td>
+<td>2</td>
+<td>1,5 Go</td>
+</tr>
+<tr>
+<td>edge (Traefik + CrowdSec)</td>
+<td>LXC</td>
+<td>1</td>
+<td>512 Mo</td>
+</tr>
+<tr>
+<td>netbird (management, signal, relay, coturn)</td>
+<td>LXC</td>
+<td>1</td>
+<td>1 Go</td>
+</tr>
+<tr>
+<td>warpgate</td>
+<td>LXC</td>
+<td>1</td>
+<td>512 Mo</td>
+</tr>
+<tr>
+<td>authentik (avec PostgreSQL ; plus de Redis depuis 2025.10)</td>
+<td>LXC</td>
+<td>2</td>
+<td>1,5 Go</td>
+</tr>
+<tr>
+<td>monitoring (VictoriaMetrics, Loki, Tempo, Grafana, Alertmanager, Uptime Kuma)</td>
+<td>LXC</td>
+<td>2</td>
+<td>3 Go</td>
+</tr>
+<tr>
+<td>Talos, control plane</td>
+<td>VM ×1</td>
+<td>2</td>
+<td>4 Go</td>
+</tr>
+<tr>
+<td>Talos, workers <code>platform</code></td>
+<td>VM ×2</td>
+<td>2</td>
+<td>4,5 Go chacun</td>
+</tr>
+<tr>
+<td>Talos, workers <code>challenges</code></td>
+<td>VM, autoscalés de 1 à 3</td>
+<td>2</td>
+<td>2,5 Go chacun</td>
+</tr>
+</tbody>
+</table>
+<p>Le total va d'environ 17 Go (minimum) à 22 Go (maximum). Une tâche Ansible sur l'hôte limite l'ARC ZFS à 4 Go. Les bornes min et max de l'autoscaler sont des variables, et la doc explique comment les ajuster selon les ressources de l'hôte.</p>
+<h2 id="reseau">Réseau<a class="headerlink" href="#reseau" title="Permanent link">&para;</a></h2>
+<p>Un bridge <code>vmbr2</code> VLAN-aware, sans uplink, est routé uniquement par OPNsense. <code>vmbr1</code> ne sert que de transit en mode WAN <code>nat</code>.</p>
+<table>
+<thead>
+<tr>
+<th>VLAN</th>
+<th>Zone</th>
+<th>CIDR</th>
+<th>Contenu</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td>WAN</td>
+<td><code>vmbr0</code></td>
+<td>IP publique</td>
+<td>Mode <code>routed_ip</code> (recommandé) : IP publique supplémentaire routée vers la VM OPNsense, avec une MAC dédiée si l'hébergeur l'exige. Mode <code>nat</code> : réseau de transit <code>vmbr1</code> 10.255.0.0/30, avec un DNAT nftables sur l'hôte des ports 443 et NetBird vers OPNsense. IP, passerelle et MAC viennent de <code>secrets/site.sops.yaml</code>.</td>
+</tr>
+<tr>
+<td>10</td>
+<td>MGMT</td>
+<td>10.20.10.0/24</td>
+<td>Interface d'admin OPNsense, endpoint Proxmox (si routé), runners CI éventuels</td>
+</tr>
+<tr>
+<td>20</td>
+<td>DMZ</td>
+<td>10.20.20.0/24</td>
+<td>LXC edge, LXC netbird</td>
+</tr>
+<tr>
+<td>30</td>
+<td>BASTION</td>
+<td>10.20.30.0/24</td>
+<td>LXC warpgate</td>
+</tr>
+<tr>
+<td>40</td>
+<td>IDENTITY</td>
+<td>10.20.40.0/24</td>
+<td>LXC authentik</td>
+</tr>
+<tr>
+<td>50</td>
+<td>MONITORING</td>
+<td>10.20.50.0/24</td>
+<td>LXC monitoring</td>
+</tr>
+<tr>
+<td>60</td>
+<td>PROD</td>
+<td>10.20.60.0/24</td>
+<td>Control plane Talos, workers platform, pool LB Cilium pour l'ingress</td>
+</tr>
+<tr>
+<td>70</td>
+<td>CHALLENGES</td>
+<td>10.20.70.0/24</td>
+<td>Workers challenges, routing peer NetBird, pool LB Cilium pour les instances</td>
+</tr>
+</tbody>
+</table>
+<p>Matrice de flux (deny all par défaut, journalisée) :
+- <strong>Internet → DMZ :</strong> 443 et ports NetBird uniquement.
+- <strong>DMZ (edge) → PROD :</strong> ingress uniquement.
+- <strong>DMZ (edge) → IDENTITY :</strong> 443 uniquement.
+- <strong>Joueurs NetBird → CHALLENGES :</strong> IPs LB des instances uniquement. Un contrôleur <code>netbird-sync</code> crée une resource et une policy par instance et par équipe, en phase 2.
+- <strong>Staff NetBird → BASTION uniquement.</strong>
+- <strong>BASTION → toutes les zones :</strong> SSH, HTTPS, API kube (6443) et API Talos (50000).
+- <strong>Toutes les zones → MONITORING :</strong> push uniquement.
+- <strong>MONITORING → toutes les zones :</strong> scrape uniquement.
+- <strong>PROD → API Proxmox :</strong> pour CAPMOX et le CSI.
+- <strong>CHALLENGES → * :</strong> refusé, sauf l'API kube et la DNS interne ; egress internet uniquement par allowlist de challenge.</p>
+<h2 id="structure-du-repo">Structure du repo<a class="headerlink" href="#structure-du-repo" title="Permanent link">&para;</a></h2>
+<div class="highlight"><pre><span></span><code><a id="__codelineno-0-1" name="__codelineno-0-1" href="#__codelineno-0-1"></a>penetrate-and-destroy/
+<a id="__codelineno-0-2" name="__codelineno-0-2" href="#__codelineno-0-2"></a>  flake.nix (devshell épinglé), Taskfile.yml, .sops.yaml, renovate.json, README.md
+<a id="__codelineno-0-3" name="__codelineno-0-3" href="#__codelineno-0-3"></a>  infra/
+<a id="__codelineno-0-4" name="__codelineno-0-4" href="#__codelineno-0-4"></a>    tofu/modules/{proxmox-network,lxc-service,talos-image,opnsense-vm}
+<a id="__codelineno-0-5" name="__codelineno-0-5" href="#__codelineno-0-5"></a>    tofu/stacks/{00-host-network,10-router,20-services-lxc,30-authentik,40-netbird,50-warpgate,60-opnsense-rules,70-dns}
+<a id="__codelineno-0-6" name="__codelineno-0-6" href="#__codelineno-0-6"></a>    opnsense/ (config.xml.tmpl + génération de l&#39;ISO d&#39;import)
+<a id="__codelineno-0-7" name="__codelineno-0-7" href="#__codelineno-0-7"></a>    ansible/ (inventaires générés par tofu ; rôles host-tuning, base-hardening, edge-traefik-crowdsec, netbird-server, warpgate, authentik, monitoring-stack, alloy)
+<a id="__codelineno-0-8" name="__codelineno-0-8" href="#__codelineno-0-8"></a>  bootstrap/ (config kind, clusterctl init, manifests CAPI du cluster prod, script pivot)
+<a id="__codelineno-0-9" name="__codelineno-0-9" href="#__codelineno-0-9"></a>  gitops/
+<a id="__codelineno-0-10" name="__codelineno-0-10" href="#__codelineno-0-10"></a>    bootstrap/ (Application root : apps-of-apps)
+<a id="__codelineno-0-11" name="__codelineno-0-11" href="#__codelineno-0-11"></a>    clusters/prod/ (Cluster, TalosControlPlane, MachineDeployments platform et challenges, gérés par ArgoCD après le pivot)
+<a id="__codelineno-0-12" name="__codelineno-0-12" href="#__codelineno-0-12"></a>    platform/ (cilium, cert-manager, traefik, keda, cluster-autoscaler, capi-providers, proxmox-csi, mariadb-operator, valkey, garage, zot, kyverno, alloy, external-dns, sealed-config ksops)
+<a id="__codelineno-0-13" name="__codelineno-0-13" href="#__codelineno-0-13"></a>    apps/ (ctfd, frontend, chall-manager, netbird-sync)
+<a id="__codelineno-0-14" name="__codelineno-0-14" href="#__codelineno-0-14"></a>  apps/
+<a id="__codelineno-0-15" name="__codelineno-0-15" href="#__codelineno-0-15"></a>    frontend/ (Next.js App Router + TS + Tailwind/shadcn + BFF)
+<a id="__codelineno-0-16" name="__codelineno-0-16" href="#__codelineno-0-16"></a>    ctfd/ (Dockerfile épinglé, plugins sso-bridge, metrics-exporter, chall-manager-bridge)
+<a id="__codelineno-0-17" name="__codelineno-0-17" href="#__codelineno-0-17"></a>    netbird-sync/ (petit contrôleur Go)
+<a id="__codelineno-0-18" name="__codelineno-0-18" href="#__codelineno-0-18"></a>  challenges/ (schéma challenge.yml étendu, 3 exemples : web instancié, pwn instancié, crypto statique)
+<a id="__codelineno-0-19" name="__codelineno-0-19" href="#__codelineno-0-19"></a>  monitoring/ (dashboards JSON, règles d&#39;alerte et de recording)
+<a id="__codelineno-0-20" name="__codelineno-0-20" href="#__codelineno-0-20"></a>  docs/ (MkDocs Material : architecture, ADR, réseau, runbooks, guide manager, guide joueur)
+<a id="__codelineno-0-21" name="__codelineno-0-21" href="#__codelineno-0-21"></a>  .github/workflows/ (lint, tofu plan, kubeconform, build reproductible + SBOM + cosign, e2e)
+</code></pre></div>
+<h2 id="task-up-reconstruction-complete"><code>task up</code> : reconstruction complète<a class="headerlink" href="#task-up-reconstruction-complete" title="Permanent link">&para;</a></h2>
+<ol>
+<li><code>00-host-network</code> crée <code>vmbr2</code>, et le rôle Ansible host-tuning configure l'ARC ZFS et nftables (le DNAT de repli).</li>
+<li><code>10-router</code> crée la VM OPNsense avec l'ISO de config, puis <code>60-opnsense-rules</code> pose la matrice de flux.</li>
+<li><code>20-services-lxc</code> crée les LXC, puis Ansible y déploie en Docker Compose, avec des images épinglées par digest, une première passe (monitoring, authentik, edge).</li>
+<li><code>30-authentik</code> configure en tofu les applications, providers, groupes et flows (OIDC pour NetBird, Warpgate, Grafana, ArgoCD, front et Proxmox) et <strong>génère</strong> les secrets des clients OIDC ; <code>scripts/sopsctl.py oidc-sync</code> les recopie dans les sops, puis Ansible déploie la seconde passe (warpgate, netbird, rejeu de monitoring).</li>
+<li><code>bootstrap/</code> lance kind, puis <code>clusterctl init</code> et la création du cluster Talos, puis <code>clusterctl move</code> dans la prod. ArgoCD est installé et l'Application root est appliquée.</li>
+<li>ArgoCD synchronise la plateforme, puis les apps, puis les manifests de son propre cluster CAPI.</li>
+<li><code>40-netbird</code> et <code>50-warpgate</code> créent les groupes, policies, routes et targets. <code>70-dns</code> crée les enregistrements.</li>
+</ol>
+<p>Les autres commandes :
+- <code>task destroy</code> supprime toutes les ressources sauf l'hôte.
+- <code>task rebuild</code> enchaîne destroy puis up.
+- <code>task backup</code> et <code>task restore</code> sauvegardent et restaurent MariaDB et Garage vers un S3 externe optionnel.</p>
+<h2 id="scaling">Scaling<a class="headerlink" href="#scaling" title="Permanent link">&para;</a></h2>
+<ul>
+<li><strong>CTFd et front :</strong> un seul <code>ScaledObject</code> KEDA par Deployment, avec deux triggers (CPU + métrique applicative : <code>pad_frontend_active_sessions</code> pour le front, sessions actives pour CTFd). KEDA génère l'HPA, pas d'HPA séparé.</li>
+<li><strong>chall-manager :</strong> <code>ScaledObject</code> KEDA.</li>
+<li><strong>Instances :</strong> une ResourceQuota et un LimitRange par instance, avec un TTL.</li>
+<li><strong>Nœuds :</strong> cluster-autoscaler sur le pool <code>challenges</code>, de 1 à 3.</li>
+<li><strong>Validation :</strong> un test de charge k6.</li>
+</ul>
+<h2 id="supervision">Supervision<a class="headerlink" href="#supervision" title="Permanent link">&para;</a></h2>
+<p>Alloy, sur chaque LXC et en DaemonSet, envoie :
+- les métriques vers VictoriaMetrics ;
+- les logs vers Loki ;
+- les traces vers Tempo.</p>
+<p>Exporters : node, pve-exporter, OPNsense, CrowdSec, Authentik, NetBird, Warpgate, MariaDB, Valkey, Traefik, Cilium et Hubble, et un exporter CTFd maison (users, solves, first bloods, instances).</p>
+<p>Dashboards versionnés :
+- plateforme ;
+- live CTF ;
+- sécurité ;
+- capacité du cluster et de l'hôte.</p>
+<p>Alertmanager notifie sur Discord et par e-mail. Uptime Kuma fournit les sondes externes.</p>
+<h2 id="front-nextjs">Front Next.js<a class="headerlink" href="#front-nextjs" title="Permanent link">&para;</a></h2>
+<ul>
+<li><strong>Design distinctif</strong> (skill frontend-design) : identité « PenetrateAndDestroy », esthétique terminal/ops, sombre.</li>
+<li><strong>Auth :</strong> OIDC Authentik via Auth.js. Les rôles viennent des groupes <code>ctf-players</code>, <code>ctf-managers</code> et <code>ctf-admins</code>.</li>
+<li><strong>BFF :</strong> les route handlers du serveur appellent l'API CTFd avec un token par utilisateur, émis par le plugin <code>sso-bridge</code>. Ce plugin provisionne l'utilisateur et est protégé par un secret partagé et une NetworkPolicy. Aucun token CTFd ne transite par le navigateur.</li>
+<li><strong>Espace joueur :</strong></li>
+<li>dashboard ;</li>
+<li>challenges par catégorie, avec statut ;</li>
+<li>soumission de flag ;</li>
+<li>instances : lancer, prolonger, arrêter, avec un compte à rebours et le rappel NetBird ;</li>
+<li>scoreboard live (SSE) avec graphe ;</li>
+<li>gestion d'équipe ;</li>
+<li>notifications ;</li>
+<li>profil ;</li>
+<li>onboarding NetBird.</li>
+<li><strong>Portail manager :</strong></li>
+<li>upload d'un ZIP avec <code>challenge.yml</code> (format ctfcli étendu) : validation, fichiers vers Garage, images vers Zot, création dans CTFd et du scénario dans chall-manager ;</li>
+<li>mode Git : synchronisation via la CI ctfcli ;</li>
+<li>test d'instance ;</li>
+<li>gestion de l'événement (dates, freeze) ;</li>
+<li>modération ;</li>
+<li>statistiques par challenge.</li>
+</ul>
+<h2 id="plan-dexecution-par-sous-agents">Plan d'exécution par sous-agents<a class="headerlink" href="#plan-dexecution-par-sous-agents" title="Permanent link">&para;</a></h2>
+<ul>
+<li><strong>Vague 0 (moi) :</strong> squelette du repo, conventions, <code>flake.nix</code>, <code>Taskfile</code>, <code>infra/contracts.yaml</code> (CIDR, IPs, noms DNS, groupes, ports : la source unique que tous les agents consomment), puis création du repo GitHub.</li>
+<li><strong>Vague 1 (5 agents en parallèle, worktrees isolés) :</strong></li>
+<li>tofu : hôte, réseau, OPNsense, LXC et règles ;</li>
+<li>Ansible : services LXC ;</li>
+<li>bootstrap CAPI/Talos et plateforme GitOps ;</li>
+<li>CTFd, plugins, chall-manager, netbird-sync et challenges d'exemple ;</li>
+<li>front Next.js : joueur, manager, BFF et Playwright.</li>
+<li><strong>Vague 2 :</strong></li>
+<li>configuration Authentik, NetBird et Warpgate via tofu ;</li>
+<li>dashboards et alertes ;</li>
+<li>CI ;</li>
+<li>revue sécurité croisée.</li>
+<li><strong>Vague 3 :</strong> documentation MkDocs (diagrammes, ADR, matrice de flux, runbooks up/destroy/rebuild/incident, guides manager et joueur), puis vérification.</li>
+<li><strong>Déploiement réel :</strong> avec l'utilisateur. Une <strong>confirmation explicite</strong> est demandée avant toute action sur l'hôte (réseau, VMs).</li>
+</ul>
+<h2 id="prerequis-a-fournir-avant-le-deploiement-pas-avant-le-code">Prérequis à fournir (avant le déploiement, pas avant le code)<a class="headerlink" href="#prerequis-a-fournir-avant-le-deploiement-pas-avant-le-code" title="Permanent link">&para;</a></h2>
+<ol>
+<li>Un hôte Proxmox vierge, ou sans conflit de VMID ni de bridge avec le contrat (<code>infra/contracts.yaml</code>).</li>
+<li>Les valeurs de site dans <code>secrets/site.sops.yaml</code> : URL de l'API Proxmox, adresse et utilisateur SSH de l'hôte, IP publique, passerelle et MAC si nécessaire (<code>task secrets:pending</code> liste ce qui manque).</li>
+<li>Un token API Proxmox (privilèges VM, LXC, stockage et réseau), ainsi que sudo pour l'utilisateur SSH ou une clé root pour le rôle host-tuning (ARC ZFS, nftables).</li>
+<li>Un domaine, et un token API OVH DNS pour cert-manager et external-dns.</li>
+<li>Une IP publique supplémentaire routée vers la VM routeur (sinon, mode <code>nat</code> : DNAT de l'hôte).</li>
+<li>Un webhook Discord et un SMTP.</li>
+<li><code>gh</code> authentifié pour créer <code>kim-tsr/penetrate-and-destroy</code>.</li>
+</ol>
+<h2 id="verification">Vérification<a class="headerlink" href="#verification" title="Permanent link">&para;</a></h2>
+<ul>
+<li><strong>CI :</strong></li>
+<li><code>tofu validate</code> et <code>tofu plan</code> ;</li>
+<li><code>ansible-lint</code> ;</li>
+<li><code>kubeconform</code> et <code>kustomize</code>/<code>helm template</code> sur <code>gitops/</code> ;</li>
+<li><code>next build</code>, lint et tests ;</li>
+<li>Trivy et checkov.</li>
+<li><strong>Local :</strong> un docker-compose e2e (CTFd, front, Authentik, mock de chall-manager) et Playwright (login, flag, scoreboard, upload manager).</li>
+<li><strong>Serveur :</strong></li>
+<li><code>task up</code> de bout en bout et toutes les Applications ArgoCD Synced/Healthy ;</li>
+<li>SSO sur chaque app ;</li>
+<li>via NetBird : instance joignable ; sans NetBird : instance injoignable ;</li>
+<li>matrice de flux testée par nmap depuis chaque zone ;</li>
+<li>k6 pour valider le scale des pods puis des nœuds ;</li>
+<li><code>task rebuild</code> chronométré ;</li>
+<li>dashboards alimentés et alerte de test reçue.</li>
+</ul>
+<h2 id="avancement">Avancement<a class="headerlink" href="#avancement" title="Permanent link">&para;</a></h2>
+<h3 id="lot-1-termine">Lot 1, terminé<a class="headerlink" href="#lot-1-termine" title="Permanent link">&para;</a></h3>
+<p>Après les vagues 0, 1 et la majeure partie de la vague 2, le lot 1 a complété :</p>
+<table>
+<thead>
+<tr>
+<th>Domaine</th>
+<th>Livré</th>
+<th>Validation</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td>tofu</td>
+<td>stacks <code>40-netbird</code> (groupes, networks <code>pad-instances</code> et <code>pad-bastion</code>, policy staff vers bastion, utilisateur de service netbird-sync) et <code>50-warpgate</code> (rôles, targets SSH/HTTP) ; noms techniques ajoutés au contrat</td>
+<td><code>tofu validate</code> vert avec des providers compilés depuis les sources (registry bloqué) ; lock files à générer</td>
+</tr>
+<tr>
+<td>monitoring</td>
+<td><code>monitoring/</code> : 4 dashboards, 67 alertes, 23 recording rules, Alertmanager (Discord, e-mail, Watchdog vers Uptime Kuma), sondes Uptime Kuma déclaratives ; branché dans le rôle <code>monitoring-stack</code></td>
+<td><code>monitoring/scripts/check.sh</code> vert (promtool, amtool, vmalert)</td>
+</tr>
+<tr>
+<td>gitops socle</td>
+<td>ServiceMonitors de tous les composants, netpol de scrape Alloy, scrape direct du kubelet, PodMonitor Zot ; <code>root</code> synchronise désormais les 18 composants (5 avant) ; Applications <code>capi-providers</code> et <code>cluster-prod</code> ; sourceRepos complets</td>
+<td>kustomize + kubeconform verts ; <code>helm template</code> sur les 11 charts</td>
+</tr>
+<tr>
+<td>ops</td>
+<td><code>task backup</code>/<code>restore</code> (MariaDB + Garage, S3 externe optionnel), confirmation forte de <code>task destroy</code>, e2e docker-compose, k6, CI (gitleaks, checkov, actionlint, trivy secrets)</td>
+<td>actionlint, shellcheck, <code>k6 inspect</code> ; pile e2e jamais démarrée (pas de Docker)</td>
+</tr>
+<tr>
+<td>secrets</td>
+<td>chaîne SOPS/ksops complète, <code>task secrets:{keys,init,pending,check,rotate-cluster-key}</code>, CI à clé éphémère, <code>scripts/check-sops.sh</code>, <code>.gitleaks.toml</code></td>
+<td>bout en bout avec une clé jetable</td>
+</tr>
+<tr>
+<td>front</td>
+<td>Next.js complet : espace joueur, portail manager, BFF, DA « salle d'opérations », Dockerfile, gitops (ScaledObject unique)</td>
+<td>lint, typecheck, 152 tests vitest, build, 18 parcours Playwright en mode mock</td>
+</tr>
+<tr>
+<td>CTFd</td>
+<td>plugin <code>pad_public</code> (événement, first bloods), modération dans <code>manager_api</code> avec journal d'audit ; <code>API.md</code> à jour ; correctif : CTFd 3.8 n'authentifie <code>Authorization: Token</code> que sur les requêtes JSON</td>
+<td>71 tests pytest sur un vrai CTFd 3.8.8</td>
+</tr>
+</tbody>
+</table>
+<p><strong>Écarts par rapport au plan d'origine</strong>
+- Authentik tourne sans Redis, conforme à l'upstream depuis 2025.10.
+- La configuration OIDC de Warpgate reste côté Ansible : le provider tofu ne gère pas les fournisseurs SSO.
+- L'IdP de NetBird est configuré par Ansible. Le stack tofu l'a, mais désactivé par défaut.
+- Le bucket de sauvegarde de CTFd s'appelle <code>backups</code>.</p>
+<p><strong>TODO ouverts (actions manuelles et vérifications sur cluster réel)</strong>
+- Supprimer la policy NetBird « Default » (All ↔ All). Créer le PAT de netbird-sync. Ajouter les règles OPNsense des routing peers.
+- Générer les <code>.terraform.lock.hcl</code> (<code>task tofu:lock</code>) et le <code>flake.lock</code> sur une machine qui a accès aux registries.
+- Clés S3 de CTFd : faire lire des clés fournies en sops par le Job <code>garage-init</code>, au lieu de les recopier à la main.
+- Collecter les blocages OPNsense dans Loki (syslog) ; vérifier les noms de métriques NetBird et CrowdSec ; exposer Alertmanager derrière le forward-auth.
+- Valider sur un vrai cluster : chart Alloy 1.13.1 et certificats kubelet, labels Zot, adoption SSA des objets CAPI par ArgoCD, téléchargement de ksops par l'initContainer, image du front.
+- Calibrer le seuil KEDA du front avec k6 ; publier le statut de synchro Git consommé par le front (<code>PAD_GIT_SYNC_STATUS_URL</code>).</p>
+<h3 id="lot-2-valeurs-de-site-en-entrees-chiffrees-termine">Lot 2 : valeurs de site en entrées chiffrées, terminé<a class="headerlink" href="#lot-2-valeurs-de-site-en-entrees-chiffrees-termine" title="Permanent link">&para;</a></h3>
+<ul>
+<li>Le contrat ne porte ni IP publique, ni passerelle, ni URL d'API, ni nom d'hôte. Ces valeurs sont des entrées chiffrées (<code>secrets/site.sops.yaml</code>, créé par <code>task secrets:init</code>, listé par <code>task secrets:pending</code>), lues par tofu, Ansible et les scripts.</li>
+<li>Nœud Proxmox par défaut <code>pve</code> ; <code>task site:node -- &lt;nom&gt;</code> met à jour le contrat et les manifests marqués <code># contracts: host.node</code>.</li>
+<li>Mode WAN générique <code>routed_ip</code> | <code>nat</code>. Prérequis : un hôte Proxmox vierge ou sans conflit de VMID ni de bridge avec le contrat.</li>
+<li>Licence MIT ; garde-fou <code>scripts/check-site-leaks.sh</code> (lint et CI), qui compare des empreintes sha256 sans republier les motifs interdits.</li>
+</ul>
+<h3 id="lot-3-durcissement-face-aux-joueurs-revue-de-securite-findings-3-a-6-et-10">Lot 3 : durcissement face aux joueurs (revue de sécurité, findings 3 à 6 et 10)<a class="headerlink" href="#lot-3-durcissement-face-aux-joueurs-revue-de-securite-findings-3-a-6-et-10" title="Permanent link">&para;</a></h3>
+<ul>
+<li><strong>Déni de service</strong> : ResourceQuota et LimitRange générés par Kyverno sur chaque <code>inst-*</code> (ephemeral-storage compris), plafonds par conteneur dans le scénario (cpu 2, mémoire 1Gi, éphémère 1Gi), kubelet du pool challenges (<code>podPidsLimit</code> 256, <code>maxPods</code> 40), plus aucun egress DNS (tunnel DNS) ; DNS limité à <code>cluster.local</code> en opt-in.</li>
+<li><strong>Images</strong> : registre <code>registry.pad.internal/ctf/</code> et empreinte <code>@sha256</code> obligatoires (schéma, scénario, Kyverno <code>restrict-instance-images</code>) ; <code>verify-images</code> en Enforce piloté par le ConfigMap <code>pad-image-policy</code> (Audit tant que la clé cosign est factice) ; images ctfd, frontend et netbird-sync par empreinte. Voir <code>docs/operations/images-signees.md</code>.</li>
+<li><strong>Noyau</strong> : <code>hostUsers: false</code> (user namespaces, feature gate kubelet), RuntimeClass gVisor optionnelle (<code>PAD_RUNTIME_CLASS</code>).</li>
+<li><strong>Flux</strong> : I3 asymétrique, 6443 limité aux workers challenges (stack <code>60-opnsense-rules</code>).</li>
+<li><strong>NetBird</strong> : entrée des instances limitée au routing peer (plus d'overlay), rattachement automatique des joueurs à <code>ctf-team-&lt;id&gt;</code> par netbird-sync, refus de démarrer tant que la policy Default existe, PAT <code>network_admin</code> pour netbird-sync et <code>auditor</code> pour le front.</li>
+<li><strong>Socle</strong> : PSS et NetworkPolicy pour les namespaces CAPI, <code>pad-cluster</code> et <code>csi-proxmox</code> ; clé S3 de sauvegarde dédiée (optionnelle) dans Garage.</li>
+<li><strong>Raccordements faits ensuite</strong> : <code>scripts/sopsctl.py</code> copie <code>PAD_INTERNAL_TOKEN</code> de CTFd vers le secret netbird-sync, génère la clé de sauvegarde Garage avec <code>--all</code> et recopie les secrets OIDC (<code>oidc-sync</code>) ; <code>scripts/backup.sh</code>/<code>restore.sh</code> utilisent la clé dédiée quand elle existe (repli sur la clé principale) ; <code>task up</code> déploie les services en deux passes autour de <code>30-authentik</code>.</li>
+<li><strong>À faire (hors périmètre du lot)</strong> : identifiants de pull Zot (<code>pad-pull</code>) sur les nœuds challenges, à poser par <code>talosctl</code> (action manuelle 8 ; règle <code>ctf/**</code> et Secret <code>argocd-oidc</code> faits : sops + ksops, alimenté par <code>oidc-sync</code>) ; vérifier sur cluster réel <code>UserNamespacesSupport</code> sous Talos, les motifs DNS Cilium, le rôle <code>network_admin</code> NetBird et la syntaxe keyless de Kyverno.</li>
+</ul>
+<h3 id="lot-4-durcissement-suite-de-la-revue-de-securite">Lot 4 : durcissement, suite de la revue de sécurité<a class="headerlink" href="#lot-4-durcissement-suite-de-la-revue-de-securite" title="Permanent link">&para;</a></h3>
+<ul>
+<li><strong>Limite globale d'instances</strong> : <code>instances.max_total</code> (90) et <code>instances.max_per_team</code> (3) au contrat ; refus 503 côté plugin <code>chall_manager_bridge</code> (<code>PAD_INSTANCES_MAX_TOTAL</code>, préchauffées comprises, managers exemptés) ; alertes <code>InstancesLBPoolFilling</code> et <code>InstancesLBPoolExhausted</code>. Non transactionnel : la marge de 10 IP absorbe les courses.</li>
+<li><strong>Egress de chall-manager</strong> : plus de <code>0.0.0.0/0:443</code> ; <code>CiliumNetworkPolicy</code> avec <code>toFQDNs</code> (hôtes de releases GitHub, <code>get.pulumi.com</code>) et DNS filtré en L7. À vérifier sur cluster réel (hôtes réellement requis par le CLI Pulumi) ; règle retirable une fois le cache de plugins chaud.</li>
+<li><strong>netbird-sync</strong> : la VAP limite le <code>patch</code> au seul finalizer <code>pad.io/netbird-sync</code> des Services <code>inst-*</code> (ni create ni delete, spec intouchable).</li>
+<li><strong>Kyverno</strong> : contrôleur d'admission en 2 réplicas, anti-affinité préférée, PDB <code>minAvailable: 1</code> (pas 3 : 2 workers platform et RAM serrée).</li>
+</ul>
+<h3 id="lot-5-pret-a-deployer">Lot 5 : prêt à déployer<a class="headerlink" href="#lot-5-pret-a-deployer" title="Permanent link">&para;</a></h3>
+<ul>
+<li><strong>Déploiement pas à pas</strong> : phases <code>task phase:0-prereqs</code> à <code>phase:12-verify</code>, chacune rejouable et suivie d'un <code>check:&lt;phase&gt;</code> (OK/KO/WARN) ; <code>task status</code> ; <code>task site:set</code> pour les valeurs non secrètes (nœud, stockages) ; destruction et reconstruction du cluster seul ou de tout (<code>cluster:destroy</code>, <code>cluster:rebuild</code>, <code>destroy</code>, <code>rebuild</code>, <code>state:purge</code>). Guide : <a href="guide-deploiement.html">Guide de déploiement</a>.</li>
+<li><strong>Bloquants corrigés</strong> : <code>playbooks/services.yml</code>, VMID unique du template Talos, route de l'hôte vers les zones, contenu <code>import</code> du stockage ISO, ARC ZFS conditionnel, split-DNS Unbound vers l'edge, <code>keyctl</code> et <code>/dev/net/tun</code> posés par Ansible (réservés à <code>root@pam</code> côté API), enrôlement automatique des routing peers NetBird (LXC <code>nbrouter</code> et agent bastion).</li>
+<li><strong>Images</strong> : empreintes réelles épinglées (<code>task apps:pin-digests</code>), publication dans Zot du scénario et des images de challenge (<code>task apps:zot:publish</code>).</li>
+<li><strong>CI</strong> : checkov et smoke e2e bloquants ; passe complète sur <code>main</code>, à la demande et chaque semaine. Les trois workflows sont verts.</li>
+</ul>
+<h3 id="prochaine-etape">Prochaine étape<a class="headerlink" href="#prochaine-etape" title="Permanent link">&para;</a></h3>
+<p>Premier déploiement réel par l'opérateur, en suivant le guide. Points validés uniquement hors ligne, à confirmer sur le matériel : adoption des objets CAPI par ArgoCD, user namespaces Talos, règles DNS L7 Cilium et FQDN de chall-manager, rôle NetBird <code>network_admin</code>, import de configuration OPNsense, overrides Unbound, enchaînement complet de <code>task up</code>.</p>
+
+
+
+
+
+
+
+
+
+
+
+
+                
+              </article>
+            </div>
+          
+          
+<script>var target=document.getElementById(location.hash.slice(1));target&&target.name&&(target.checked=target.name.startsWith("__tabbed_"))</script>
+        </div>
+        
+          <button type="button" class="md-top md-icon" data-md-component="top" hidden>
+  
+  <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24"><path d="M13 20h-2V8l-5.5 5.5-1.42-1.42L12 4.16l7.92 7.92-1.42 1.42L13 8z"/></svg>
+  Retour en haut de la page
+</button>
+        
+      </main>
+      
+        <footer class="md-footer">
+  
+    
+      
+      <nav class="md-footer__inner md-grid" aria-label="Pied de page" >
+        
+          
+          <a href="architecture/supervision.html" class="md-footer__link md-footer__link--prev" aria-label="Précédent: Supervision">
+            <div class="md-footer__button md-icon">
+              
+              <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24"><path d="M20 11v2H8l5.5 5.5-1.42 1.42L4.16 12l7.92-7.92L13.5 5.5 8 11z"/></svg>
+            </div>
+            <div class="md-footer__title">
+              <span class="md-footer__direction">
+                Précédent
+              </span>
+              <div class="md-ellipsis">
+                Supervision
+              </div>
+            </div>
+          </a>
+        
+        
+          
+          <a href="composants/index.html" class="md-footer__link md-footer__link--next" aria-label="Suivant: Composants">
+            <div class="md-footer__title">
+              <span class="md-footer__direction">
+                Suivant
+              </span>
+              <div class="md-ellipsis">
+                Composants
+              </div>
+            </div>
+            <div class="md-footer__button md-icon">
+              
+              <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24"><path d="M4 11v2h12l-5.5 5.5 1.42 1.42L19.84 12l-7.92-7.92L10.5 5.5 16 11z"/></svg>
+            </div>
+          </a>
+        
+      </nav>
+    
+  
+  <div class="md-footer-meta md-typeset">
+    <div class="md-footer-meta__inner md-grid">
+      <div class="md-copyright">
+  
+  
+    Made with
+    <a href="https://squidfunk.github.io/mkdocs-material/" target="_blank" rel="noopener">
+      Material for MkDocs
+    </a>
+  
+</div>
+      
+    </div>
+  </div>
+</footer>
+      
+    </div>
+    <div class="md-dialog" data-md-component="dialog">
+      <div class="md-dialog__inner md-typeset"></div>
+    </div>
+    
+    
+    
+      
+      <script id="__config" type="application/json">{"base": ".", "features": ["navigation.sections", "navigation.top", "navigation.indexes", "navigation.footer", "search.suggest", "search.highlight", "content.code.copy", "toc.follow"], "search": "assets/javascripts/workers/search.973d3a69.min.js", "tags": null, "translations": {"clipboard.copied": "Copi\u00e9 dans le presse-papier", "clipboard.copy": "Copier dans le presse-papier", "search.result.more.one": "1 de plus sur cette page", "search.result.more.other": "# de plus sur cette page", "search.result.none": "Aucun document trouv\u00e9", "search.result.one": "1 document trouv\u00e9", "search.result.other": "# documents trouv\u00e9s", "search.result.placeholder": "Taper pour d\u00e9marrer la recherche", "search.result.term.missing": "Non trouv\u00e9", "select.version": "S\u00e9lectionner la version"}, "version": null}</script>
+    
+    
+      <script src="assets/javascripts/bundle.f55a23d4.min.js"></script>
+      
+    
+  </body>
+</html>
