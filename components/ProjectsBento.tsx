@@ -11,11 +11,12 @@ const AREA: Record<string, string> = {
 function Cell({ p, i }: { p: Project; i: number }) {
   const big = p.id === 'kort' || p.id === 'pipeline-slsa' || p.id === 'penetrate-and-destroy'
   const shown = big ? p.tech : p.tech.slice(0, 4)
+  const to = p.href ?? (p.slug ? `/projets/${p.slug}` : null)
   const body = (
     <>
       <div className="bn-top">
         <span className="bn-num">{String(i + 1).padStart(2, '0')}</span>
-        {p.slug && <span className="bn-open">Retour d&apos;expérience →</span>}
+        {to && <span className="bn-open">{p.cta ?? 'Retour d’expérience'} →</span>}
       </div>
       <h3 className="bn-title">{p.title}</h3>
       <p className="bn-desc">{p.description}</p>
@@ -25,9 +26,9 @@ function Cell({ p, i }: { p: Project; i: number }) {
       </ul>
     </>
   )
-  const cls = `bn ${AREA[p.id] ?? ''}${big ? ' bn-big' : ''}${p.slug ? ' bn-link' : ''}`
-  return p.slug
-    ? <Link href={`/projets/${p.slug}`} id={p.id} className={cls}>{body}</Link>
+  const cls = `bn ${AREA[p.id] ?? ''}${big ? ' bn-big' : ''}${to ? ' bn-link' : ''}`
+  return to
+    ? <Link href={to} id={p.id} className={cls}>{body}</Link>
     : <article id={p.id} className={cls}>{body}</article>
 }
 

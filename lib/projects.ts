@@ -4,6 +4,8 @@ export interface Project {
   description: string
   tech: string[]
   slug?: string
+  href?: string
+  cta?: string
   featured?: boolean
 }
 
@@ -72,5 +74,13 @@ export const PROJECTS: Project[] = [
     title: 'PCBWalker : robot quadrupède',
     description: "Projet en cours : un robot à 4 pattes avec cinématique inverse et suivi vidéo, sur Raspberry Pi Zero 2W, avec un châssis en PCB sur mesure.",
     tech: ['Raspberry Pi', 'Arduino', 'Électronique', 'Conception de PCB'],
+  },
+  {
+    id: 'goad-light',
+    title: 'GOAD Light : write-up Active Directory',
+    href: '/pentest/goad-light',
+    cta: 'Lire le write-up',
+    description: "Compromission complète du lab Active Directory GOAD Light (Orange Cyberdefense), déployé sur mon serveur dédié : d'aucun compte jusqu'à Enterprise Admin sur toute la forêt. C'est la première entrée de ma section Pentest, consacrée aux box et aux CTF : le write-up y décortique, schémas à l'appui, chaque protocole en jeu — résolution de noms et empoisonnement LLMNR, NTLM, Kerberos et relations d'approbation de forêt.",
+    tech: ['Active Directory', 'Kerberos', 'NTLM', 'Responder', 'BloodHound', 'Impacket', 'NetExec'],
   },
 ]

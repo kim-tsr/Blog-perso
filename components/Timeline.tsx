@@ -1,5 +1,5 @@
 'use client'
-import { useEffect, useRef, useState } from 'react'
+import { useEffect, useRef, useState, type CSSProperties } from 'react'
 import Link from 'next/link'
 import { TIMELINE, type TimelineLink } from '@/lib/timeline'
 
@@ -15,8 +15,13 @@ export default function Timeline() {
   const [d, setD] = useState('')
   const [len, setLen] = useState(0)
   const [holes, setHoles] = useState<{ x: number; y: number; w: number; h: number }[]>([])
+  const [grad, setGrad] = useState<{ y0: number; yN: number; stops: { o: number; c: string }[] }>({ y0: 0, yN: 1, stops: [] })
   const marks = useRef<{ y: number; L: number }[]>([])
   let n = 0
+
+  // Affichage anté-chronologique : le plus récent en haut, le plus ancien en bas.
+  // Les données restent en ordre chronologique dans lib/timeline.ts.
+  const phases = [...TIMELINE].reverse().map(ph => ({ ...ph, items: [...ph.items].reverse() }))
 
   // 1. trace la courbe à partir de la position réelle des points dans le DOM
   useEffect(() => {
@@ -43,6 +48,25 @@ export default function Timeline() {
         const r = h.getBoundingClientRect()
         return { x: r.left - cr.left - 6, y: r.top - cr.top - 2, w: r.width + 12, h: r.height + 4 }
       }))
+
+      // dégradé en bandes : une couleur par phase, frontières aux titres de phase
+      const pds = [...el.querySelectorAll<HTMLElement>('.tl-pdot')].map(p => {
+        const r = p.getBoundingClientRect()
+        return r.top + r.height / 2 - cr.top
+      })
+      const cols = [...TIMELINE].reverse().map(p => p.color)
+      const gy0 = pts[0].y, gyN = pts[pts.length - 1].y, GH = Math.max(1, gyN - gy0)
+      const stops: { o: number; c: string }[] = []
+      if (cols.length && pds.length === cols.length) {
+        stops.push({ o: 0, c: cols[0] })
+        for (let i = 1; i < cols.length; i++) {
+          const o = Math.min(1, Math.max(0, (pds[i] - gy0) / GH))
+          stops.push({ o, c: cols[i - 1] }, { o, c: cols[i] })
+        }
+        stops.push({ o: 1, c: cols[cols.length - 1] })
+      }
+      setGrad({ y0: gy0, yN: gyN, stops })
+
       setD(path)
     }
     build()
@@ -107,14 +131,14 @@ export default function Timeline() {
       <style>{`
         .tl { position:relative; max-width:1040px; margin:0 auto; --f:0; }
         .tl-svg { position:absolute; inset:0; width:100%; height:100%; overflow:visible; pointer-events:none; }
-        .tl-base { fill:none; stroke:var(--border); stroke-width:2; }
-        .tl-fill { fill:none; stroke:var(--accent); stroke-width:3; stroke-linecap:round; }
+        .tl-base { fill:none; stroke:url(#tl-grad); opacity:.28; stroke-width:2; }
+        .tl-fill { fill:none; stroke:url(#tl-grad); stroke-width:3; stroke-linecap:round; }
 
         .tl-phase { position:relative; z-index:1; text-align:center; margin:96px 0 56px; }
         .tl-phase:first-of-type { margin-top:24px; }
         .tl-pdot { position:absolute; left:50%; top:50%; width:2px; height:2px; }
         .tl-phase h2 { display:inline-block; padding:10px 28px; font-size:clamp(30px,4.6vw,52px); font-weight:700; letter-spacing:-.03em; line-height:1.1; }
-        .tl-phase p { font-size:16px; color:var(--dim); margin-top:6px; display:inline-block; padding:0 16px; }
+        .tl-phase p { font-size:16px; font-weight:600; color:var(--pc, var(--dim)); margin-top:6px; display:inline-block; padding:0 16px; }
         .tl-phase { opacity:0; transform:translateY(18px); transition:opacity .7s var(--ease), transform .7s var(--ease); }
         .tl:not(.ready) .tl-phase { opacity:1; transform:none; }
         .tl-phase.in { opacity:1; transform:none; }
@@ -122,8 +146,8 @@ export default function Timeline() {
         .tl-step { position:relative; z-index:1; margin-bottom:72px; min-height:70px; transition:opacity .5s; }
         .tl.ready .tl-step:not(.active) { opacity:.5; }
         .tl-dot { position:absolute; top:14px; width:16px; height:16px; margin-left:-8px; border-radius:50%; background:var(--bg); border:3px solid var(--border); transition:transform .3s var(--ease), background .3s, border-color .3s; }
-        .tl-step.past .tl-dot { border-color:var(--accent); }
-        .tl-step.active .tl-dot { transform:scale(1.5); background:var(--accent); border-color:var(--accent); }
+        .tl-step.past .tl-dot { border-color:var(--pc, var(--accent)); }
+        .tl-step.active .tl-dot { transform:scale(1.5); background:var(--pc, var(--accent)); border-color:var(--pc, var(--accent)); }
         .tl-step.l .tl-dot { left:40%; } .tl-step.r .tl-dot { left:60%; }
 
         .tl-body { --dx:-28px; width:calc(40% - 40px); text-align:right; }
@@ -159,6 +183,9 @@ export default function Timeline() {
                 <rect x="-100" y="-100" width="3000" height="20000" fill="white" />
                 {holes.map((h, i) => <rect key={i} x={h.x} y={h.y} width={h.w} height={h.h} rx="8" fill="black" />)}
               </mask>
+              <linearGradient id="tl-grad" gradientUnits="userSpaceOnUse" x1={0} y1={grad.y0} x2={0} y2={grad.yN}>
+                {grad.stops.map((s, i) => <stop key={i} offset={s.o} stopColor={s.c} />)}
+              </linearGradient>
             </defs>
             <g mask="url(#tl-mask)">
             <path className="tl-base" d={d} />
@@ -170,8 +197,8 @@ export default function Timeline() {
             />
             </g>
           </svg>
-          {TIMELINE.map(ph => (
-            <div key={ph.phase}>
+          {phases.map(ph => (
+            <div key={ph.phase} style={{ ['--pc']: ph.color } as CSSProperties}>
               <div className="tl-phase">
                 <span className="tl-pdot" data-dot />
                 <h2>{ph.phase}</h2>

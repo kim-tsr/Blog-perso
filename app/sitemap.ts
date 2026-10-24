@@ -6,6 +6,8 @@ export default function sitemap(): MetadataRoute.Sitemap {
   return [
     { path: '', priority: 1.0 },
     { path: '/projets', priority: 0.9 },
+    { path: '/pentest', priority: 0.8 },
+    { path: '/pentest/goad-light', priority: 0.7 },
     { path: '/technos', priority: 0.7 },
     { path: '/a-propos', priority: 0.7 },
     { path: '/contact', priority: 0.6 },

@@ -6,12 +6,13 @@ export interface TimelineItem {
   youtube?: string
   links?: TimelineLink[]
 }
-export interface TimelinePhase { phase: string; subtitle: string; items: TimelineItem[] }
+export interface TimelinePhase { phase: string; subtitle: string; color: string; items: TimelineItem[] }
 
 export const TIMELINE: TimelinePhase[] = [
   {
     phase: 'Prépa EPITA',
-    subtitle: 'Mes premiers projets en C# et en C',
+    subtitle: 'Mes premiers projets en C# et en C, et un semestre à l’étranger',
+    color: '#0d9488',
     items: [
       {
         title: 'Un jeu vidéo en C# sur Unity',
@@ -25,11 +26,18 @@ export const TIMELINE: TimelinePhase[] = [
         text: "Un projet de reconnaissance optique de caractères programmé en C : de l'image brute jusqu'au texte reconnu, avec la rigueur que demande le C sur la mémoire et les structures de données.",
         tags: ['C'],
       },
+      {
+        title: "Un semestre à l'étranger à Cal State LA",
+        text: "Pendant la prépa, un semestre d'échange à la California State University, Los Angeles : suivre les cours en anglais, m'immerger dans un autre système universitaire et une autre culture de travail, et gagner en autonomie à l'étranger.",
+        tags: ['International', 'Anglais', 'Los Angeles'],
+        links: [{ label: 'California State University, Los Angeles', href: 'https://www.calstatela.edu/', external: true }],
+      },
     ],
   },
   {
     phase: 'ING1',
     subtitle: 'Un shell en C et la recherche',
+    color: '#8b5cf6',
     items: [
       {
         title: '42sh : un shell en C',
@@ -46,7 +54,8 @@ export const TIMELINE: TimelinePhase[] = [
   },
   {
     phase: 'Majeure SecDevOps',
-    subtitle: 'Infrastructure, audit et JECT',
+    subtitle: 'Bac+4 et Bac+5 : infrastructure et audit, JECT, puis Kubernetes, sécurité des LLM et pentest',
+    color: 'var(--accent)',
     items: [
       {
         title: "Création de l'antenne JECT de Rennes",
@@ -81,12 +90,6 @@ export const TIMELINE: TimelinePhase[] = [
         tags: ['DDD', 'MongoDB', 'Redis', 'Neo4j', 'Elasticsearch', 'Kubernetes'],
         links: [{ label: 'Fiche projet', href: '/projets#clone-twitter' }],
       },
-    ],
-  },
-  {
-    phase: 'Bac+5',
-    subtitle: 'Cette année : Kubernetes, sécurité des LLM et transmission',
-    items: [
       {
         title: 'kort : déploiement GitOps sur Kubernetes',
         text: "Un raccourcisseur d'URL conteneurisé puis déployé sur mon cluster k3s avec Kustomize, ArgoCD, sealed-secrets et Prometheus. Je raconte ce que j'ai fait, mes choix et mon retour d'expérience.",
@@ -117,6 +120,12 @@ export const TIMELINE: TimelinePhase[] = [
         title: 'ACU : review, responsable et encadrant des Piscines',
         text: "Depuis juillet 2026, membre des ACU (Assistants C/Unix) : je relis les sujets, j'encadre les Piscines C/Unix et SQL et je maintiens un projet en C avec toute sa chaîne CI/CD (testsuite automatisée, build et déploiement via Nix).",
         tags: ['C', 'Unix', 'CI/CD', 'Nix'],
+      },
+      {
+        title: 'GOAD Light : write-up Active Directory',
+        text: "Compromission complète du lab Active Directory GOAD Light (Orange Cyberdefense), déployé sur mon serveur dédié : d'aucun compte jusqu'à Enterprise Admin sur toute la forêt. J'en ai fait un write-up pédagogique qui décortique, schémas à l'appui, chaque protocole en jeu — résolution de noms et empoisonnement LLMNR, NTLM, Kerberos, relations d'approbation. C'est la première entrée de ma section Pentest, consacrée aux box et aux CTF.",
+        tags: ['Active Directory', 'Kerberos', 'NTLM', 'Responder', 'BloodHound'],
+        links: [{ label: 'Lire le write-up', href: '/pentest/goad-light' }],
       },
     ],
   },
